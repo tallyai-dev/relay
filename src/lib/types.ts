@@ -35,12 +35,24 @@ export interface Lead {
   objection?: string;
 }
 
+// Disposition-based branching: after a Call step, what each outcome does next.
+export type DispositionKey = 'no_answer' | 'voicemail' | 'wrong_number' | 'booked' | 'callback' | 'not_interested';
+
+export type BranchAction =
+  | { type: 'continue' }                       // go to the next step in the cadence
+  | { type: 'send'; channel: 'text' | 'email' } // fire a text/email now, then continue
+  | { type: 'wait'; days: number }             // snooze this lead, re-touch in N days
+  | { type: 'stop'; stage: Stage };            // end the cadence + set the lead's stage
+
+export type Branches = Partial<Record<DispositionKey, BranchAction>>;
+
 export interface CadenceStep {
   position: number;
   channel: Channel;
   waitMinutes: number;
   template?: string;
   subject?: string;
+  branches?: Branches; // only meaningful on Call steps
 }
 
 export interface Cadence {

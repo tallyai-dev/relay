@@ -200,7 +200,7 @@ export async function fetchCadences(): Promise<Cadence[]> {
   if (!sb) return [];
   const { data, error } = await sb
     .from('cadences')
-    .select('id,name,cadence_steps(position,channel,wait_minutes,template,subject)')
+    .select('id,name,cadence_steps(position,channel,wait_minutes,template,subject,branches)')
     .order('created_at', { ascending: true });
   if (error) { console.error('fetchCadences', error); return []; }
   return (data || []).map((c: any): Cadence => ({
@@ -215,6 +215,7 @@ export async function fetchCadences(): Promise<Cadence[]> {
         waitMinutes: s.wait_minutes ?? 0,
         template: s.template || undefined,
         subject: s.subject || undefined,
+        branches: s.branches || undefined,
       })),
   }));
 }
@@ -252,6 +253,7 @@ export async function saveCadenceSteps(cadenceId: string, steps: CadenceStep[]):
     wait_minutes: s.waitMinutes || 0,
     template: s.template || null,
     subject: s.subject || null,
+    branches: s.branches && Object.keys(s.branches).length ? s.branches : null,
   }));
   const { error } = await sb.from('cadence_steps').insert(payload);
   if (error) console.error('saveCadenceSteps', error);

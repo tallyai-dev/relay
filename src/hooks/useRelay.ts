@@ -1,8 +1,8 @@
 'use client';
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { Lead, Activity, Channel, Disposition, Stage, Message, Rep, Cadence } from '@/lib/types';
+import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
-import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT } from '@/lib/cadence';
+import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
 import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -23,7 +23,7 @@ const SEED_CADENCES: Cadence[] = [
 ];
 export interface RecentDial { id: string; number: string; kind: 'call' | 'text'; body?: string; time: string; leadId?: string; salon?: string }
 export type FlowPhase = 'action' | 'incall' | 'dispo' | 'connected' | 'note';
-interface QueueItem { leadId: string; plan: Channel[]; step: number }
+interface QueueItem { leadId: string; plan: Channel[]; steps: CadenceStep[]; step: number }
 interface FlowState {
   on: boolean;
   queue: QueueItem[];
@@ -164,10 +164,12 @@ export function useRelay() {
       .filter((l) => l.stage !== 'won')
       .map((l) => {
         // Run the lead's assigned cadence (its call/text/email steps, skipping waits);
-        // fall back to the stage-based default plan when no cadence is set.
+        // fall back to the stage-based default plan when no cadence is set. `steps`
+        // stays aligned with `plan` so each call can read its branch rules.
         const cad = cadencesRef.current.find((c) => c.id === l.cadenceId);
-        const chans = (cad?.steps || []).filter((s) => s.channel !== 'wait').map((s) => s.channel as Channel);
-        return { leadId: l.id, plan: chans.length ? chans : planForStage(l.stage), step: 0 };
+        const actionable = (cad?.steps || []).filter((s) => s.channel !== 'wait');
+        if (actionable.length) return { leadId: l.id, plan: actionable.map((s) => s.channel as Channel), steps: actionable, step: 0 };
+        return { leadId: l.id, plan: planForStage(l.stage), steps: [], step: 0 };
       });
     if (!queue.length) return; // nothing to work
     setFlow({ on: true, queue, pos: 0, phase: 'action', actionCount: 0, pendingAdvance: null, noteActivityId: null, noteAiText: null, paused: false });
@@ -300,39 +302,56 @@ export function useRelay() {
     setFlow((f) => ({ ...f, phase: 'note', pendingAdvance: adv, noteActivityId: activityId, noteAiText: aiText }));
   }, []);
 
-  const flowDispo = useCallback((d: Disposition) => {
+  // Route a call outcome per the current cadence step's branch rules (or the
+  // sensible defaults). This is the "if statement on disposition" at runtime.
+  const applyDispo = useCallback((key: DispositionKey) => {
     if (!current) return;
-    const lead = leadById(current.leadId)!;
-    if (d === 'wrong_number') {
-      addActivity(current.leadId, { kind: 'call', direction: 'out', ty: 'Call — wrong/dead number · ⚡Flow', time: 'Just now', body: AI_NOTE.wrong_number });
-      setStage(current.leadId, 'cold');
-      advance('next_salon');
+    const step = current.steps[current.step];
+    const action = branchFor(step, key);
+    const ai = AI_NOTE[key] || '';
+    if (key === 'booked') setScore((s) => ({ ...s, demos: s.demos + 1 }));
+    const id = addActivity(current.leadId, {
+      kind: key === 'booked' ? 'book' : 'call', direction: 'out', disposition: key as Disposition, ai: true,
+      ty: `${DISPO_LABEL[key]} · ⚡Flow`, time: 'Just now', aiNote: ai, body: ai,
+    });
+    const notable = key !== 'no_answer'; // pause for a note on everything except a plain no-answer
+
+    if (action.type === 'send') {
+      // Splice the branch channel in right after the current step, then continue onto it.
+      setFlow((f) => {
+        const q = f.queue.slice(); const it = q[f.pos]; if (!it) return f;
+        const plan = it.plan.slice(); const steps = it.steps.slice();
+        plan.splice(it.step + 1, 0, action.channel);
+        steps.splice(it.step + 1, 0, { position: it.step + 1, channel: action.channel, waitMinutes: 0 });
+        q[f.pos] = { ...it, plan, steps };
+        return { ...f, queue: q };
+      });
+      if (notable) startNote(id, ai, 'onward'); else advance('onward');
       return;
     }
-    if (d === 'connected') { setFlow((f) => ({ ...f, phase: 'connected' })); return; }
-    const ai = d === 'voicemail' ? AI_NOTE.voicemail : AI_NOTE.no_answer;
-    const id = addActivity(current.leadId, {
-      kind: 'call', direction: 'out', disposition: d, ai: true,
-      ty: d === 'voicemail' ? 'Call — left voicemail · ⚡Flow' : 'Call — no answer · ⚡Flow',
-      time: 'Just now', aiNote: ai, body: ai,
-    });
-    if (d === 'voicemail') startNote(id, ai, 'onward');
-    else advance('onward');
-  }, [current, leadById, addActivity, setStage, advance, startNote]);
+    if (action.type === 'stop') {
+      setStage(current.leadId, action.stage);
+      startNote(id, ai, 'next_salon');
+      return;
+    }
+    if (action.type === 'wait') {
+      addActivity(current.leadId, { kind: 'note', ty: `Snoozed ${action.days} day${action.days === 1 ? '' : 's'} · ⚡Flow`, time: 'Just now', body: `Re-touch this salon in ${action.days} day${action.days === 1 ? '' : 's'}.` });
+      startNote(id, ai, 'next_salon');
+      return;
+    }
+    // continue
+    if (notable) startNote(id, ai, 'onward'); else advance('onward');
+  }, [current, addActivity, setStage, advance, startNote]);
 
-  const flowConnected = useCallback((kind: 'booked' | 'callback' | 'quote' | 'not_interested') => {
+  const flowDispo = useCallback((d: Disposition) => {
     if (!current) return;
-    const label = { booked: 'Demo booked', callback: 'Callback scheduled', quote: 'Quote sent', not_interested: 'Not interested' }[kind];
-    const ai = AI_NOTE[kind] || '';
-    if (kind === 'booked') setScore((s) => ({ ...s, demos: s.demos + 1 }));
-    setStage(current.leadId, kind === 'not_interested' ? 'cold' : kind === 'callback' ? 'working' : 'hot');
-    const id = addActivity(current.leadId, {
-      kind: kind === 'booked' ? 'book' : kind === 'quote' ? 'email' : 'call',
-      direction: 'out', disposition: kind, ai: true,
-      ty: `${label} · ⚡Flow`, time: 'Just now', aiNote: ai, body: ai,
-    });
-    startNote(id, ai, 'next_salon');
-  }, [current, addActivity, setStage, startNote]);
+    if (d === 'connected') { setFlow((f) => ({ ...f, phase: 'connected' })); return; }
+    applyDispo(d as DispositionKey);
+  }, [current, applyDispo]);
+
+  const flowConnected = useCallback((kind: 'booked' | 'callback' | 'not_interested') => {
+    applyDispo(kind);
+  }, [applyDispo]);
 
   const saveNote = useCallback((text: string) => {
     if (flow.noteActivityId && text.trim()) {

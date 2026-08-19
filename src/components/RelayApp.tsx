@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRelay } from '@/hooks/useRelay';
-import type { Lead, Cadence, CadenceStep, Channel } from '@/lib/types';
-import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT } from '@/lib/cadence';
+import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage } from '@/lib/types';
+import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
 import { placeCall, normalizePhone } from '@/lib/voice';
 
 type R = ReturnType<typeof useRelay>;
@@ -411,8 +411,7 @@ function FlowBar({ r, lead }: { r: R; lead: Lead }) {
         <div className="fb-dispos">
           <button className="good" onClick={() => r.flowConnected('booked')}><span className="k">1</span>🎉 Booked</button>
           <button onClick={() => r.flowConnected('callback')}><span className="k">2</span>Callback</button>
-          <button onClick={() => r.flowConnected('quote')}><span className="k">3</span>Quote</button>
-          <button className="bad" onClick={() => r.flowConnected('not_interested')}><span className="k">4</span>Not interested</button>
+          <button className="bad" onClick={() => r.flowConnected('not_interested')}><span className="k">3</span>Not interested</button>
         </div>
       </div>
     );
@@ -577,11 +576,58 @@ const CH_META: Record<Channel, { label: string; icon: React.ReactNode; color: st
   wait: { label: 'Wait', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>, color: '#8a97ab' },
 };
 
+// The routing choices offered per disposition, flattened into one dropdown.
+const ACTION_OPTIONS: { val: string; label: string; action: BranchAction }[] = [
+  { val: 'continue', label: 'Continue to next step', action: { type: 'continue' } },
+  { val: 'send:text', label: 'Send a text → continue', action: { type: 'send', channel: 'text' } },
+  { val: 'send:email', label: 'Send an email → continue', action: { type: 'send', channel: 'email' } },
+  { val: 'wait:1', label: 'Wait 1 day → re-touch', action: { type: 'wait', days: 1 } },
+  { val: 'wait:2', label: 'Wait 2 days → re-touch', action: { type: 'wait', days: 2 } },
+  { val: 'wait:3', label: 'Wait 3 days → re-touch', action: { type: 'wait', days: 3 } },
+  { val: 'wait:7', label: 'Wait 7 days → re-touch', action: { type: 'wait', days: 7 } },
+  { val: 'stop:hot', label: 'Stop — mark Hot', action: { type: 'stop', stage: 'hot' } },
+  { val: 'stop:working', label: 'Stop — mark Working', action: { type: 'stop', stage: 'working' } },
+  { val: 'stop:won', label: 'Stop — mark Won', action: { type: 'stop', stage: 'won' } },
+  { val: 'stop:cold', label: 'Stop — mark Cold', action: { type: 'stop', stage: 'cold' } },
+];
+const actionToVal = (a: BranchAction): string =>
+  a.type === 'continue' ? 'continue' : a.type === 'send' ? `send:${a.channel}` : a.type === 'wait' ? `wait:${a.days}` : `stop:${a.stage}`;
+const valToAction = (v: string): BranchAction => ACTION_OPTIONS.find((o) => o.val === v)?.action || { type: 'continue' };
+
+function BranchEditor({ step, open, onToggle, onSet }: { step: CadenceStep; open: boolean; onToggle: () => void; onSet: (k: DispositionKey, a: BranchAction) => void }) {
+  return (
+    <div className="cad-branch">
+      <button className="cad-branch-toggle" onClick={onToggle}>
+        <span className="cbt-ic">{open ? '▾' : '▸'}</span> If the call ends in…
+        <span className="cbt-sum">{DISPOSITIONS.map((d) => describeBranch(branchFor(step, d.key)).replace(/ —.*/, '').replace('Continue to next step', 'continue')).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3).join(' · ')}</span>
+      </button>
+      {open && (
+        <div className="cad-branch-rows">
+          {DISPOSITIONS.map((d) => {
+            const cur = actionToVal(branchFor(step, d.key));
+            const inList = ACTION_OPTIONS.some((o) => o.val === cur);
+            return (
+              <div key={d.key} className={`cad-branch-row grp-${d.group}`}>
+                <span className="cbr-dispo">{d.label}</span>
+                <span className="cbr-arrow">→</span>
+                <select value={inList ? cur : 'continue'} onChange={(e) => onSet(d.key, valToAction(e.target.value))}>
+                  {ACTION_OPTIONS.map((o) => <option key={o.val} value={o.val}>{o.label}</option>)}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CadenceBuilder({ r }: { r: R }) {
   const [selId, setSelId] = useState<string>(r.cadences[0]?.id || '');
   const [draft, setDraft] = useState<Cadence | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [openBranches, setOpenBranches] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     const c = r.cadences.find((x) => x.id === selId);
@@ -599,6 +645,8 @@ function CadenceBuilder({ r }: { r: R }) {
     const j = i + dir; if (j < 0 || j >= d.steps.length) return d;
     const steps = d.steps.slice(); [steps[i], steps[j]] = [steps[j], steps[i]]; return { ...d, steps };
   });
+  const setBranch = (i: number, key: DispositionKey, action: BranchAction) =>
+    patchDraft((d) => ({ ...d, steps: d.steps.map((s, j) => (j === i ? { ...s, branches: { ...(s.branches || {}), [key]: action } } : s)) }));
 
   const save = async () => { if (!draft) return; setSaving(true); await r.saveCadence(draft); setSaving(false); setDirty(false); };
   const create = async () => { const c = await r.newCadence('New cadence'); setSelId(c.id); };
@@ -661,6 +709,9 @@ function CadenceBuilder({ r }: { r: R }) {
                     {(s.channel === 'text' || s.channel === 'email') && (
                       <textarea className="cad-tpl" value={s.template || ''} onChange={(e) => updStep(i, { template: e.target.value })}
                         placeholder={s.channel === 'text' ? 'Text message — use {salon}, {first_name}' : 'Email body — use {salon}, {first_name}'} />
+                    )}
+                    {s.channel === 'call' && (
+                      <BranchEditor step={s} open={!!openBranches[i]} onToggle={() => setOpenBranches((o) => ({ ...o, [i]: !o[i] }))} onSet={(k, a) => setBranch(i, k, a)} />
                     )}
                   </div>
                 </div>

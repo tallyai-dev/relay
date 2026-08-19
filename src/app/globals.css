@@ -729,3 +729,18 @@
 .kr-num{font-weight:600;color:var(--ink);font-size:13px}
 .kr-sub{font-size:11px;color:var(--ink3)}
 @media(max-width:720px){.keypad-wrap,.cadbuild{grid-template-columns:1fr}}
+
+/* ── Cadence step branching (if-outcome) ─────────────────────────────────── */
+.cad-branch{margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
+.cad-branch-toggle{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:none;background:none;
+  cursor:pointer;font-size:12px;font-weight:700;color:var(--ink2);padding:2px}
+.cad-branch-toggle:hover{color:var(--accent-ink)}
+.cbt-ic{color:var(--accent);font-size:11px}
+.cbt-sum{font-weight:500;color:var(--ink3);font-size:11px;margin-left:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cad-branch-rows{margin-top:8px;display:flex;flex-direction:column;gap:6px;padding:4px 2px}
+.cad-branch-row{display:grid;grid-template-columns:150px 14px 1fr;align-items:center;gap:8px}
+.cbr-dispo{font-size:12px;color:var(--ink);font-weight:600}
+.cad-branch-row.grp-connected .cbr-dispo{color:#2f8f6b}
+.cbr-arrow{color:var(--ink3);text-align:center}
+.cad-branch-row select{border:1px solid var(--line);background:#fff;border-radius:7px;padding:5px 7px;font-size:12px;color:var(--ink);width:100%}
+@media(max-width:600px){.cad-branch-row{grid-template-columns:1fr;gap:2px}.cbr-arrow{display:none}}
