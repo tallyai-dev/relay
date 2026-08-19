@@ -233,6 +233,14 @@ export async function fetchCadences(): Promise<Cadence[]> {
   }));
 }
 
+// Hard-delete a lead. Contacts + activities cascade; messages/calls null out.
+export async function deleteLead(leadId: string): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  const { error } = await sb.from('leads').delete().eq('id', leadId);
+  if (error) console.error('deleteLead', error);
+}
+
 export async function createCadence(name: string): Promise<string | null> {
   const sb = supabaseBrowser();
   if (!sb) return null;

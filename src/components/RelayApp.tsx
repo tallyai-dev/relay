@@ -511,6 +511,7 @@ function EnrichView({ r }: { r: R }) {
                 <div className="avatar sm" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
                 <div className="enr-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}</div></div>
                 {saved.has(l.id) ? <span className="mchip ok">Enriched ✓</span> : missChips(l)}
+                <DeleteLeadButton r={r} leadId={l.id} label="✕" armedLabel="Delete?" className="enr-del" title={`Delete ${l.salon}`} after={() => { if (sel === l.id) { const rest = leads.filter((x) => x.id !== l.id); setSel(rest[0]?.id || null); } }} />
               </div>
             ))}
           </div>
@@ -541,6 +542,10 @@ function EnrichView({ r }: { r: R }) {
                   </>
                 )}
                 <div className="keynote">Data from Google Places. Review before saving — occasionally the top match isn’t the right business.</div>
+                <div className="enr-delrow">
+                  <DeleteLeadButton r={r} leadId={sel!} label="Delete this lead" after={() => { const rest = leads.filter((x) => x.id !== sel); setSel(rest[0]?.id || null); }} />
+                  <span className="enr-delhint">No good match &amp; no info? Remove it.</span>
+                </div>
               </>
             )}
           </div>
@@ -663,6 +668,19 @@ function IncomingBanner({ r }: { r: R }) {
 }
 
 // ── Dialer workspace ──────────────────────────────────────────────────────────
+// Two-step delete: first click arms it ("Confirm delete?"), second click removes
+// the lead. Auto-disarms after a few seconds so a stray click never deletes.
+function DeleteLeadButton({ r, leadId, label = 'Delete', armedLabel = 'Confirm delete?', className = 'btn sm danger', title = 'Delete this lead', after }: { r: R; leadId: string; label?: string; armedLabel?: string; className?: string; title?: string; after?: () => void }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 3500); return () => clearTimeout(t); }, [armed]);
+  const onClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!armed) { setArmed(true); return; }
+    r.deleteLead(leadId); after?.();
+  };
+  return <button className={`${className}${armed ? ' armed' : ''}`} onClick={onClick} title={title}>{armed ? armedLabel : label}</button>;
+}
+
 // On-the-spot enrichment button for the lead workspace. Looks the lead up on
 // Google Places and auto-fills whatever's still missing.
 function LeadEnrich({ r, lead }: { r: R; lead: Lead }) {
@@ -735,7 +753,7 @@ function Dialer({ r }: { r: R }) {
           <div className="lead-head">
             <div className="avatar big" style={{ background: colorFor(idx) }}>{initials(lead.salon)}</div>
             <div><h2>{lead.salon}</h2><div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div></div>
-            <div className="r"><LeadEnrich r={r} lead={lead} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           {inFlow ? <FlowBar r={r} lead={lead} /> : (

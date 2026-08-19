@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -533,6 +533,18 @@ export function useRelay() {
     return picked.length;
   }, [enabled, me]);
 
+  // Permanently remove a lead (and its local activities/messages). If it was the
+  // active lead, jump to the next available one.
+  const deleteLead = useCallback((leadId: string) => {
+    const remaining = leadsRef.current.filter((l) => l.id !== leadId);
+    setLeads(remaining);
+    setActivities((prev) => { const n = { ...prev }; delete n[leadId]; return n; });
+    setMessages((prev) => prev.filter((m) => m.leadId !== leadId));
+    setActiveThreadLead((cur) => (cur === leadId ? null : cur));
+    setActiveLeadId((cur) => (cur === leadId ? (remaining.find((l) => l.deployed !== false)?.id || remaining[0]?.id || cur) : cur));
+    if (enabled) deleteLeadRepo(leadId);
+  }, [enabled]);
+
   // ── Enrichment (Google Places) ───────────────────────────────────────────────
   const enrichableLeads = leads.filter((l) => !l.phone || !l.website || !l.bookingSystem);
   const DEMO_BOOKING = ['Vagaro', 'Square Appointments', 'Boulevard', 'Booksy', 'GlossGenius', 'Fresha'];
@@ -638,6 +650,6 @@ export function useRelay() {
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead,
     stagedLeads, activeLeads, deployLeads,
-    enrichableLeads, enrichLead, saveEnrichment,
+    enrichableLeads, enrichLead, saveEnrichment, deleteLead,
   };
 }
