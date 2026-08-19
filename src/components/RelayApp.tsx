@@ -1,9 +1,10 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRelay } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
 import { placeCall, normalizePhone } from '@/lib/voice';
+import { analyzeImport } from '@/lib/csv';
 
 type R = ReturnType<typeof useRelay>;
 
@@ -47,26 +48,86 @@ export default function RelayApp() {
   );
 }
 
+const ROW_BADGE: Record<string, { label: string; cls: string }> = {
+  ready: { label: 'New', cls: 'rb-ready' },
+  dup_existing: { label: 'Already a lead', cls: 'rb-dup' },
+  dup_batch: { label: 'Dup in file', cls: 'rb-dup' },
+  invalid: { label: 'No salon name', cls: 'rb-bad' },
+};
+
 function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
-  const [csv, setCsv] = useState('salon,city,phone,email,contact,role\nBella Salon,Denver CO,+13035550101,hi@bella.com,Ana,Owner');
+  const [csv, setCsv] = useState('salon,city,phone,email,contact,role\nBella Salon,Denver CO,(303) 555-0101,hi@bella.com,Ana,Owner');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
   const [owner, setOwner] = useState<string>(r.me?.id || '');
+  const [showAll, setShowAll] = useState(false);
   const isAdmin = r.me?.role === 'admin';
+
+  // Existing book — for duplicate detection.
+  const existing = useMemo(() => {
+    const phones = new Set<string>(); const keys = new Set<string>();
+    r.leads.forEach((l) => {
+      const p = (l.phone || '').replace(/\D/g, '').slice(-10);
+      if (p) phones.add(p);
+      keys.add(`${(l.salon || '').toLowerCase()}|${(l.city || '').toLowerCase()}`);
+    });
+    return { phones, keys };
+  }, [r.leads]);
+
+  const analysis = useMemo(() => (csv.trim() ? analyzeImport(csv, existing) : null), [csv, existing]);
+  const s = analysis?.summary;
+  const readyRows = analysis ? analysis.rows.filter((x) => x.status === 'ready') : [];
+
   const run = async () => {
     setBusy(true);
-    const n = await r.importLeads(csv, owner || r.me?.id);
+    const n = await r.importCleanRows(readyRows, owner || r.me?.id);
     setBusy(false); setDone(n);
   };
+
+  const rowsToShow = analysis ? (showAll ? analysis.rows : analysis.rows.slice(0, 8)) : [];
+
   return (
     <div className="overlay on" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal">
+      <div className="modal" style={{ maxWidth: 640 }}>
         <div className="mh"><h3>Import leads</h3>{!r.enabled && <span className="demo-flag" style={{ marginLeft: 6 }}>Demo mode — appends locally</span>}<button className="x" onClick={onClose}>×</button></div>
         <div className="mb import-body">
           {done === null ? (
             <>
-              <div className="import-hint">Paste CSV or export from your list tool. Recognized columns: <b>salon, city, phone, email, contact, role</b> (header row optional).</div>
-              <textarea value={csv} onChange={(e) => setCsv(e.target.value)} />
+              <div className="import-hint">Paste a CSV (or export from anywhere). Columns are auto‑detected — phone numbers get cleaned up, bad emails dropped, and duplicates flagged before anything is imported.</div>
+              <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setShowAll(false); }} placeholder="Paste rows here…" />
+
+              {analysis && s && s.total > 0 && (
+                <>
+                  {analysis.detected.length > 0 && (
+                    <div className="imp-detected">Detected: {analysis.detected.map((d, i) => <span key={d.field}>{i > 0 ? ' · ' : ''}<b>{d.field}</b> ← {d.column}</span>)}</div>
+                  )}
+                  <div className="imp-chips">
+                    <span className="imp-chip c-ready">{s.ready} new</span>
+                    {s.dupExisting > 0 && <span className="imp-chip c-dup">{s.dupExisting} already in Relay</span>}
+                    {s.dupBatch > 0 && <span className="imp-chip c-dup">{s.dupBatch} dup in file</span>}
+                    {s.invalid > 0 && <span className="imp-chip c-bad">{s.invalid} no salon name</span>}
+                    {s.phonesFixed > 0 && <span className="imp-chip c-fix">{s.phonesFixed} phones cleaned</span>}
+                    {s.emailsDropped > 0 && <span className="imp-chip c-fix">{s.emailsDropped} bad emails dropped</span>}
+                  </div>
+                  <div className="imp-table">
+                    <table>
+                      <thead><tr><th>Salon</th><th>Phone</th><th>Email</th><th>Status</th></tr></thead>
+                      <tbody>
+                        {rowsToShow.map((row, i) => (
+                          <tr key={i} className={row.status !== 'ready' ? 'imp-skip' : ''}>
+                            <td>{row.salon || <span className="muted">—</span>}</td>
+                            <td>{row.phone || <span className="muted">{row.warnings.includes('phone unreadable') ? 'unreadable' : '—'}</span>}</td>
+                            <td>{row.email || <span className="muted">—</span>}</td>
+                            <td><span className={`rb ${ROW_BADGE[row.status].cls}`}>{ROW_BADGE[row.status].label}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {analysis.rows.length > 8 && !showAll && <button className="imp-more" onClick={() => setShowAll(true)}>Show all {analysis.rows.length} rows</button>}
+                  </div>
+                </>
+              )}
+
               {r.enabled && (
                 <div className="field" style={{ marginTop: 12 }}>
                   <label>Assign this batch to</label>
@@ -83,7 +144,7 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
           ) : (
             <div style={{ textAlign: 'center', padding: '18px 0' }}>
               <div className="success-tick">✓</div>
-              <div><span className="import-count">{done}</span> leads imported{r.enabled ? ' to Supabase' : ' (demo)'}.</div>
+              <div><span className="import-count">{done}</span> leads imported{r.enabled ? ' to Supabase' : ' (demo)'}. Duplicates and blanks were skipped automatically.</div>
             </div>
           )}
         </div>
@@ -91,7 +152,7 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
           {done === null ? (
             <>
               <button className="btn" onClick={onClose}>Cancel</button>
-              <button className="btn primary" onClick={run} disabled={busy}>{busy ? 'Importing…' : 'Import'}</button>
+              <button className="btn primary" onClick={run} disabled={busy || readyRows.length === 0}>{busy ? 'Importing…' : `Import ${readyRows.length} new lead${readyRows.length === 1 ? '' : 's'}`}</button>
             </>
           ) : (
             <button className="btn primary" onClick={onClose}>Done</button>

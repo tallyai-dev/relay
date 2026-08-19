@@ -1,5 +1,6 @@
 'use client';
 import { supabaseBrowser } from './supabase';
+import { toE164 } from './csv';
 import type { Lead, Activity, Stage, Message, Rep, Cadence, CadenceStep } from './types';
 
 // Data access layer. Every function no-ops (returns empty / does nothing) when
@@ -286,7 +287,7 @@ export async function bulkInsertLeads(rows: ImportRow[], ownerRepId?: string): P
     .map((r) => ({
       salon: r.salon.trim(),
       city: r.city?.trim() || null,
-      phone: r.phone?.trim() || null,
+      phone: toE164(r.phone) ?? (r.phone?.trim() || null),
       email: r.email?.trim() || null,
       stage: 'new',
       cadence_id: DEFAULT_CADENCE,
@@ -300,7 +301,7 @@ export async function bulkInsertLeads(rows: ImportRow[], ownerRepId?: string): P
       lead_id: d.id,
       name: rows[i].contactName?.trim() || '—',
       role: rows[i].role?.trim() || 'Front desk',
-      phone: rows[i].phone?.trim() || null,
+      phone: toE164(rows[i].phone) ?? (rows[i].phone?.trim() || null),
       email: rows[i].email?.trim() || null,
       is_primary: true,
     }))

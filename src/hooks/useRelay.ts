@@ -4,6 +4,7 @@ import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep,
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
 import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick } from '@/lib/repo';
+import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
 export type View = 'leads' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile';
@@ -150,6 +151,27 @@ export function useRelay() {
         id: 'imp' + Date.now() + i,
         salon: r.salon, city: r.city || '', phone: r.phone || '',
         email: r.email, stage: 'new' as Stage, cadenceId: 'c1', cadencePos: 0,
+        objection: 'Gatekeeper', lastTouch: 'New',
+        contact: { id: 'c' + i, name: r.contactName || '—', role: r.role || 'Front desk', phone: r.phone },
+      })),
+    ]);
+    return rows.length;
+  }, [enabled]);
+
+  // Import pre-cleaned/validated rows (from the smart-import preview).
+  const importCleanRows = useCallback(async (rows: ImportRow[], ownerRepId?: string): Promise<number> => {
+    if (!rows.length) return 0;
+    if (enabled) {
+      const n = await bulkInsertLeads(rows, ownerRepId);
+      const fresh = await fetchLeads();
+      setLeads(fresh);
+      return n;
+    }
+    setLeads((prev) => [
+      ...prev,
+      ...rows.map((r, i) => ({
+        id: 'imp' + Date.now() + i, salon: r.salon, city: r.city || '', phone: r.phone || '',
+        email: r.email, stage: 'new' as Stage, cadenceId: DEFAULT_CADENCE_ID, cadencePos: 0,
         objection: 'Gatekeeper', lastTouch: 'New',
         contact: { id: 'c' + i, name: r.contactName || '—', role: r.role || 'Front desk', phone: r.phone },
       })),
@@ -449,7 +471,7 @@ export function useRelay() {
 
   return {
     view, setView, leads, activities, score, activeLeadId, setActiveLeadId, leadById,
-    flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads,
+    flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads, importCleanRows,
     me, reps, signOut,
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip,
     addActivity, setStage,

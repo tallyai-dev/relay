@@ -864,3 +864,27 @@
   .fdial-fab{right:14px;bottom:70px;width:52px;height:52px}
   .fdial-pop{right:10px;left:10px;width:auto;bottom:130px}
 }
+
+/* ── Smart import preview ─────────────────────────────────────────────────── */
+.imp-detected{font-size:11.5px;color:var(--ink3);margin-top:10px;line-height:1.6}
+.imp-detected b{color:var(--ink2);font-weight:600}
+.imp-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.imp-chip{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px}
+.imp-chip.c-ready{background:#e4f5ec;color:#2f8f6b}
+.imp-chip.c-dup{background:var(--amber-soft);color:var(--amber)}
+.imp-chip.c-bad{background:var(--red-soft);color:var(--red)}
+.imp-chip.c-fix{background:var(--accent-soft);color:var(--accent-ink)}
+.imp-table{margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.imp-table table{width:100%;border-collapse:collapse;font-size:12px}
+.imp-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink3);
+  font-weight:700;padding:7px 10px;background:#fcfdff;border-bottom:1px solid var(--line)}
+.imp-table td{padding:7px 10px;border-bottom:1px solid var(--line2);vertical-align:middle}
+.imp-table tr:last-child td{border-bottom:none}
+.imp-table tr.imp-skip td{color:var(--ink3);background:#fcfcfa}
+.rb{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap}
+.rb.rb-ready{background:#e4f5ec;color:#2f8f6b}
+.rb.rb-dup{background:var(--amber-soft);color:var(--amber)}
+.rb.rb-bad{background:var(--red-soft);color:var(--red)}
+.imp-more{width:100%;border:none;border-top:1px solid var(--line2);background:#fcfdff;padding:8px;font-size:11.5px;
+  font-weight:600;color:var(--accent-ink);cursor:pointer}
+.imp-more:hover{background:var(--accent-soft)}
