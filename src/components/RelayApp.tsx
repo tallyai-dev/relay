@@ -268,7 +268,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
             {r.activeLeads.map((l, i) => (
               <tr key={l.id} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
-                  <div><div className="nm">{l.salon}</div><div className="loc">{l.city}</div></div></div></td>
+                  <div><div className="nm">{l.salon}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
                 <td>{l.contact?.name === '—' ? <span className="muted">No name yet</span> : <div><div style={{ fontWeight: 600 }}>{l.contact?.name}</div><div className="loc">{l.contact?.role}</div></div>}</td>
                 <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
                 <td className="muted">{l.lastTouch}</td>
@@ -610,6 +610,35 @@ function IncomingBanner({ r }: { r: R }) {
 }
 
 // ── Dialer workspace ──────────────────────────────────────────────────────────
+// On-the-spot enrichment button for the lead workspace. Looks the lead up on
+// Google Places and auto-fills whatever's still missing.
+function LeadEnrich({ r, lead }: { r: R; lead: Lead }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true); setMsg(null);
+    const res = await r.enrichLead(lead.id);
+    setBusy(false);
+    if (!res.found) { setMsg('No Google match'); setTimeout(() => setMsg(null), 4000); return; }
+    const f: { phone?: string; city?: string; website?: string; bookingSystem?: string } = {};
+    if (res.phone && !lead.phone) f.phone = res.phone;
+    if (res.website && !lead.website) f.website = res.website;
+    if (res.bookingSystem && !lead.bookingSystem) f.bookingSystem = res.bookingSystem;
+    if (res.city && !lead.city) f.city = res.city;
+    const keys = Object.keys(f);
+    if (!keys.length) { setMsg('Already complete'); setTimeout(() => setMsg(null), 4000); return; }
+    r.saveEnrichment(lead.id, f);
+    setMsg(`✓ Added ${keys.map((k) => (k === 'bookingSystem' ? 'booking' : k)).join(', ')}`);
+    setTimeout(() => setMsg(null), 6000);
+  };
+  return (
+    <div className="lead-enrich">
+      {msg && <span className="lead-enrich-msg">{msg}</span>}
+      <button className="btn sm" onClick={run} disabled={busy} title="Fill missing info from Google">{busy ? 'Enriching…' : '✨ Enrich'}</button>
+    </div>
+  );
+}
+
 function Dialer({ r }: { r: R }) {
   const lead = r.leadById(r.activeLeadId);
   if (!lead) return null;
@@ -652,8 +681,8 @@ function Dialer({ r }: { r: R }) {
 
           <div className="lead-head">
             <div className="avatar big" style={{ background: colorFor(idx) }}>{initials(lead.salon)}</div>
-            <div><h2>{lead.salon}</h2><div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`} · {lead.city}</div></div>
-            <div className="r"><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div><h2>{lead.salon}</h2><div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div></div>
+            <div className="r"><LeadEnrich r={r} lead={lead} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           {inFlow ? <FlowBar r={r} lead={lead} /> : (
@@ -663,15 +692,17 @@ function Dialer({ r }: { r: R }) {
           )}
 
           <div className="qgrid">
-            <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone}</div></div>
+            <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone || <span className="muted">—</span>}</div></div>
+            <div className="qc"><div className="qk">Booking</div><div className="qv">{lead.bookingSystem ? <span className="book-chip">{lead.bookingSystem}</span> : <span className="muted">—</span>}</div></div>
+            <div className="qc"><div className="qk">Website</div><div className="qv">{lead.website ? <a className="qv-link" href={`https://${lead.website}`} target="_blank" rel="noreferrer">{lead.website}</a> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Cadence</div>
               <select className="qv-select" value={r.cadences.some((c) => c.id === lead.cadenceId) ? lead.cadenceId : (r.cadences[0]?.id || '')}
                 onChange={(e) => r.assignCadence(lead.id, e.target.value)} onClick={(e) => e.stopPropagation()}>
                 {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
+            <div className="qc"><div className="qk">City</div><div className="qv">{lead.city || <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Last touch</div><div className="qv">{lead.lastTouch}</div></div>
-            <div className="qc"><div className="qk">Objection</div><div className="qv">{lead.objection}</div></div>
           </div>
 
           <div className="block" style={{ marginTop: 14 }}>
