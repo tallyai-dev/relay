@@ -245,6 +245,30 @@ function dueBadge(l: Lead): string | null {
 }
 
 function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
+  const [q, setQ] = useState('');
+  const [stage, setStage] = useState('all');
+  const [booking, setBooking] = useState('all');
+  const [due, setDue] = useState('all');
+  const [needsEnrich, setNeedsEnrich] = useState(false);
+
+  const bookingOpts = Array.from(new Set(r.activeLeads.map((l) => l.bookingSystem).filter(Boolean))).sort() as string[];
+  const dueSet = new Set(r.dueLeads.map((l) => l.id));
+  const schedSet = new Set(r.scheduledLeads.map((l) => l.id));
+
+  const filtered = r.activeLeads.filter((l) => {
+    if (q) { const s = q.trim().toLowerCase(); if (!(l.salon.toLowerCase().includes(s) || (l.city || '').toLowerCase().includes(s) || (l.contact?.name || '').toLowerCase().includes(s))) return false; }
+    if (stage !== 'all' && l.stage !== stage) return false;
+    if (booking === 'none') { if (l.bookingSystem) return false; }
+    else if (booking !== 'all' && l.bookingSystem !== booking) return false;
+    if (due === 'due' && !dueSet.has(l.id)) return false;
+    if (due === 'sched' && !schedSet.has(l.id)) return false;
+    if (needsEnrich && l.phone && l.website && l.bookingSystem) return false;
+    return true;
+  });
+
+  const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || needsEnrich;
+  const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setNeedsEnrich(false); };
+
   return (
     <section className="view on">
       <div className="page-head">
@@ -261,11 +285,33 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
         {r.scheduledLeads.length > 0 && <span className="due-chip due-later">{r.scheduledLeads.length} scheduled</span>}
         <span className="due-hint">Snoozed salons come back automatically on their re-touch date.</span>
       </div>
+
+      <div className="lead-filters">
+        <input className="lf-search" placeholder="Search salon, city, or contact…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select value={stage} onChange={(e) => setStage(e.target.value)}>
+          <option value="all">All stages</option>
+          {(Object.keys(stageLabel) as (keyof typeof stageLabel)[]).map((s) => <option key={s} value={s}>{stageLabel[s]}</option>)}
+        </select>
+        <select value={booking} onChange={(e) => setBooking(e.target.value)}>
+          <option value="all">All booking platforms</option>
+          {bookingOpts.map((b) => <option key={b} value={b}>{b}</option>)}
+          <option value="none">No booking / unknown</option>
+        </select>
+        <select value={due} onChange={(e) => setDue(e.target.value)}>
+          <option value="all">Any time</option>
+          <option value="due">Due today</option>
+          <option value="sched">Scheduled</option>
+        </select>
+        <button className={`lf-toggle ${needsEnrich ? 'on' : ''}`} onClick={() => setNeedsEnrich((v) => !v)}>Needs enrichment</button>
+        {anyFilter && <button className="lf-clear" onClick={clearFilters}>Clear</button>}
+        <span className="lf-count">{filtered.length} of {r.activeLeads.length}</span>
+      </div>
+
       <div className="table">
         <table>
           <thead><tr><th>Salon</th><th>Owner / contact</th><th>Next step</th><th>Last touch</th><th>Stage</th><th /></tr></thead>
           <tbody>
-            {r.activeLeads.map((l, i) => (
+            {filtered.map((l, i) => (
               <tr key={l.id} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
                   <div><div className="nm">{l.salon}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
@@ -285,6 +331,13 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
             {r.stagedLeads.length > 0
               ? <button className="btn primary" onClick={() => r.setView('staging')}>Go to staging →</button>
               : <button className="btn primary" onClick={onImport}>{Icon.import}Import leads</button>}
+          </div>
+        )}
+        {r.activeLeads.length > 0 && filtered.length === 0 && (
+          <div className="empty-active">
+            <div className="ea-title">No leads match these filters</div>
+            <div className="ea-sub">Try loosening a filter or clearing them.</div>
+            <button className="btn primary" onClick={clearFilters}>Clear filters</button>
           </div>
         )}
       </div>
