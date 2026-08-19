@@ -49,6 +49,7 @@ function rowToLead(row: any): Lead {
     stage: row.stage as Stage,
     cadenceId: row.cadence_id || DEFAULT_CADENCE,
     cadencePos: row.cadence_pos ?? 0,
+    nextActionAt: row.next_action_at || undefined,
     contact: c
       ? { id: c.id, name: c.name || '—', role: c.role || '—', phone: c.phone, email: c.email }
       : { id: 'c', name: '—', role: '—' },
@@ -264,6 +265,13 @@ export async function assignLeadCadence(leadId: string, cadenceId: string): Prom
   const sb = supabaseBrowser();
   if (!sb) return;
   await sb.from('leads').update({ cadence_id: cadenceId, cadence_pos: 0 }).eq('id', leadId);
+}
+
+// Snooze a lead: set its next-due timestamp N days out (null clears / makes due now).
+export async function setLeadNextAction(leadId: string, iso: string | null): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('leads').update({ next_action_at: iso }).eq('id', leadId);
 }
 
 // Quick-create a lead from the keypad (a dialed number the rep wants to keep).

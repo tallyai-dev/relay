@@ -226,10 +226,18 @@ function TopBar({ r, onImport }: { r: R; onImport: () => void }) {
       {!r.enabled && <span className="demo-flag" title="No Supabase configured — running on local demo data">Demo mode</span>}
       {r.enabled && r.me && <span className="demo-flag" style={{ background: r.me.role === 'admin' ? 'var(--accent-soft)' : '#eef2f8', color: r.me.role === 'admin' ? 'var(--accent-ink)' : 'var(--ink2)' }} title={r.me.email}>{r.me.name} · {r.me.role}</span>}
       <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
-      <button className="btn flowbtn" onClick={r.startFlow}>{Icon.flow}Flow Mode</button>
+      <button className="btn flowbtn" onClick={() => r.startFlow()}>{Icon.flow}Flow Mode</button>
       {r.enabled && <button className="btn" onClick={r.signOut} title="Sign out">Sign out</button>}
     </div>
   );
+}
+
+function dueBadge(l: Lead): string | null {
+  if (!l.nextActionAt) return null;
+  const ms = new Date(l.nextActionAt).getTime() - Date.now();
+  if (ms <= 0) return null;
+  const d = Math.max(1, Math.ceil(ms / 864e5));
+  return `⏰ due in ${d}d`;
 }
 
 function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
@@ -239,8 +247,15 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
         <div><h1>Salon prospecting — pipeline</h1><p>{r.leads.length} salons · working the “Cold Salon Outbound” cadence</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
-          <button className="btn primary flowbtn" onClick={r.startFlow}>{Icon.flow}Start Flow</button>
+          {r.dueLeads.length > 0
+            ? <button className="btn primary flowbtn" onClick={r.startDueFlow}>{Icon.flow}Work {r.dueLeads.length} due today</button>
+            : <button className="btn primary flowbtn" onClick={() => r.startFlow()}>{Icon.flow}Start Flow</button>}
         </div>
+      </div>
+      <div className="due-bar">
+        <span className="due-chip due-now">{r.dueLeads.length} due today</span>
+        {r.scheduledLeads.length > 0 && <span className="due-chip due-later">{r.scheduledLeads.length} scheduled</span>}
+        <span className="due-hint">Snoozed salons come back automatically on their re-touch date.</span>
       </div>
       <div className="table">
         <table>
@@ -251,7 +266,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
                   <div><div className="nm">{l.salon}</div><div className="loc">{l.city}</div></div></div></td>
                 <td>{l.contact?.name === '—' ? <span className="muted">No name yet</span> : <div><div style={{ fontWeight: 600 }}>{l.contact?.name}</div><div className="loc">{l.contact?.role}</div></div>}</td>
-                <td><span className="mode">{Icon.call} Call — {l.objection}</span></td>
+                <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
                 <td className="muted">{l.lastTouch}</td>
                 <td><span className={`pill ${stagePill[l.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[l.stage]}</span></td>
                 <td><button className="btn sm" onClick={(e) => { e.stopPropagation(); r.setActiveLeadId(l.id); r.setView('dialer'); }}>Open →</button></td>
@@ -396,7 +411,7 @@ function Dialer({ r }: { r: R }) {
             </div>
           ) : (
             <div className="session-bar"><span>Manual dial</span><div className="prog"><i style={{ width: '20%' }} /></div>
-              <button className="btn sm flowbtn" onClick={r.startFlow}>Start Flow</button></div>
+              <button className="btn sm flowbtn" onClick={() => r.startFlow()}>Start Flow</button></div>
           )}
 
           <div className="lead-head">
@@ -408,7 +423,7 @@ function Dialer({ r }: { r: R }) {
           {inFlow ? <FlowBar r={r} lead={lead} /> : (
             <div className="task-strip"><div className="cb" /><div className="t">Call — {lead.objection}</div>
               <div className="chip amber">Due today</div>
-              <div className="o"><button className="btn sm primary" onClick={r.startFlow}>Start Flow</button></div></div>
+              <div className="o"><button className="btn sm primary" onClick={() => r.startFlow()}>Start Flow</button></div></div>
           )}
 
           <div className="qgrid">

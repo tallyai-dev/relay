@@ -30,6 +30,7 @@ export interface Lead {
   stage: Stage;
   cadenceId: string;
   cadencePos: number;
+  nextActionAt?: string; // ISO — when this lead is next due (null = due now / never scheduled)
   contact?: Contact;
   lastTouch?: string;
   objection?: string;

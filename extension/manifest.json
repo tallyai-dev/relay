@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Add to Relay",
+  "version": "1.0.0",
+  "description": "Grab the salon on the page you're viewing and add it to Relay as a lead in one click.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://tallyai-relay.netlify.app/*"],
+  "action": {
+    "default_title": "Add to Relay",
+    "default_popup": "popup.html"
+  }
+}

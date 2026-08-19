@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { --accent:#2563eb; --line:#e5e7eb; --ink:#0f172a; --ink2:#334155; --ink3:#64748b; }
+  * { box-sizing:border-box; }
+  body { width:320px; margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:#fff; }
+  header { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .logo { width:26px; height:26px; border-radius:7px; background:var(--accent); color:#fff; font-weight:800; font-size:14px; display:flex; align-items:center; justify-content:center; }
+  header b { font-size:14px; }
+  .body { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:11px; font-weight:600; color:var(--ink2); }
+  input { border:1px solid var(--line); border-radius:8px; padding:9px 10px; font-size:13px; font-family:inherit; color:var(--ink); }
+  input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+  button { background:var(--accent); color:#fff; border:none; border-radius:9px; padding:11px; font-size:14px; font-weight:700; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:default; }
+  .msg { font-size:12px; padding:8px 10px; border-radius:8px; }
+  .msg.err { background:#fdecec; color:#c0392b; }
+  .msg.ok { background:#e6f6ec; color:#16a34a; }
+  .src { font-size:11px; color:var(--ink3); }
+  .done { text-align:center; padding:20px 0; }
+  .tick { width:44px; height:44px; border-radius:50%; background:#e6f6ec; color:#16a34a; font-size:22px; display:flex; align-items:center; justify-content:center; margin:0 auto 10px; }
+  a { color:var(--accent); text-decoration:none; }
+</style>
+</head>
+<body>
+  <header><div class="logo">R</div><b>Add to Relay</b></header>
+  <div class="body" id="root">
+    <label>Salon name<input id="salon" placeholder="Business name" /></label>
+    <label>Phone<input id="phone" placeholder="(555) 123-4567" /></label>
+    <label>City<input id="city" placeholder="City, ST" /></label>
+    <div id="msg"></div>
+    <button id="add">Add to Relay</button>
+    <div class="src">Reads the name &amp; phone off the current page — edit anything before saving.</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -40,6 +40,14 @@ interface ActiveCall { leadId: string; direction: 'out' | 'in'; viaFlow: boolean
 
 const uid = () => 'x' + Math.random().toString(36).slice(2, 9);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+
+const DAY_MS = 864e5;
+const endOfToday = () => { const d = new Date(); d.setHours(23, 59, 59, 999); return d.getTime(); };
+// A lead is "due" if it's still in rotation and either never scheduled or its snooze has expired.
+const leadIsDue = (l: Lead) =>
+  l.stage !== 'won' && l.stage !== 'cold' && (!l.nextActionAt || new Date(l.nextActionAt).getTime() <= endOfToday());
+const leadIsScheduled = (l: Lead) =>
+  l.stage !== 'won' && l.stage !== 'cold' && !!l.nextActionAt && new Date(l.nextActionAt).getTime() > endOfToday();
 
 export function useRelay() {
   const [view, setView] = useState<View>('leads');
@@ -181,9 +189,11 @@ export function useRelay() {
 
   // ── Flow control ───────────────────────────────────────────────────────────
   // Build the session queue from the rep's current book (RLS already scoped it).
-  const startFlow = useCallback(() => {
+  const startFlow = useCallback((onlyIds?: string[]) => {
+    const idSet = onlyIds ? new Set(onlyIds) : null;
     const queue: QueueItem[] = leadsRef.current
       .filter((l) => l.stage !== 'won')
+      .filter((l) => !idSet || idSet.has(l.id))
       .map((l) => {
         // Run the lead's assigned cadence (its call/text/email steps, skipping waits);
         // fall back to the stage-based default plan when no cadence is set. `steps`
@@ -358,13 +368,16 @@ export function useRelay() {
       return;
     }
     if (action.type === 'wait') {
+      const iso = new Date(Date.now() + action.days * DAY_MS).toISOString();
+      setLeads((prev) => prev.map((l) => (l.id === current.leadId ? { ...l, nextActionAt: iso } : l)));
+      if (enabled) setLeadNextAction(current.leadId, iso);
       addActivity(current.leadId, { kind: 'note', ty: `Snoozed ${action.days} day${action.days === 1 ? '' : 's'} · ⚡Flow`, time: 'Just now', body: `Re-touch this salon in ${action.days} day${action.days === 1 ? '' : 's'}.` });
       startNote(id, ai, 'next_salon');
       return;
     }
     // continue
     if (notable) startNote(id, ai, 'onward'); else advance('onward');
-  }, [current, addActivity, setStage, advance, startNote]);
+  }, [current, addActivity, setStage, advance, startNote, enabled]);
 
   const flowDispo = useCallback((d: Disposition) => {
     if (!current) return;
@@ -426,6 +439,18 @@ export function useRelay() {
     if (enabled) assignLeadCadence(leadId, cadenceId);
   }, [enabled]);
 
+  // ── Due-today scheduler ──────────────────────────────────────────────────────
+  const dueLeads = leads.filter(leadIsDue);
+  const scheduledLeads = leads.filter(leadIsScheduled);
+  const startDueFlow = useCallback(() => startFlow(dueLeads.map((l) => l.id)), [startFlow, dueLeads]);
+  // Manually snooze/reschedule a lead N days out (days<=0 clears → due now).
+  const snoozeLead = useCallback((leadId: string, days: number) => {
+    const iso = days > 0 ? new Date(Date.now() + days * DAY_MS).toISOString() : null;
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, nextActionAt: iso || undefined } : l)));
+    if (enabled) setLeadNextAction(leadId, iso);
+    addActivity(leadId, { kind: 'note', ty: days > 0 ? `Snoozed ${days} day${days === 1 ? '' : 's'}` : 'Marked due now', time: 'Just now', body: days > 0 ? `Re-touch in ${days} day${days === 1 ? '' : 's'}.` : 'Back in today’s queue.' });
+  }, [enabled, addActivity]);
+
   // ── Keypad (type-a-number dialer) ────────────────────────────────────────────
   const matchLeadByNumber = useCallback((number: string): Lead | undefined => {
     const d = number.replace(/[^0-9]/g, '').slice(-10);
@@ -479,5 +504,6 @@ export function useRelay() {
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
+    dueLeads, scheduledLeads, startDueFlow, snoozeLead,
   };
 }
