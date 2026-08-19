@@ -34,14 +34,16 @@ export async function POST(req: Request) {
       if (!res.ok) return Response.json({ error: await res.text() }, { status: 502 });
     }
 
+    let messageId: string | null = null;
     const db = supabaseAdmin();
     if (db) {
-      await db.from('messages').insert({
+      const { data } = await db.from('messages').insert({
         lead_id: leadId ?? null, channel: 'email', direction: 'out',
         from_addr: from, to_addr: to, subject, body, is_read: true,
-      });
+      }).select('id').single();
+      messageId = data?.id ?? null;
     }
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, messageId });
   } catch (e: any) {
     return Response.json({ error: String(e) }, { status: 502 });
   }

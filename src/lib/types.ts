@@ -89,6 +89,8 @@ export interface Message {
   body: string;
   time: string;
   isRead: boolean;
+  pending?: boolean; // optimistic send in flight
+  failed?: boolean;  // provider rejected the send
 }
 
 // A single unit of work Flow hands the rep, produced by the cadence engine.

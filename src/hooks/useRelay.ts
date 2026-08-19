@@ -274,16 +274,62 @@ export function useRelay() {
   }, [enabled]);
   const closeThread = useCallback(() => setActiveThreadLead(null), []);
 
+  // Low-level senders. Return the provider result so callers can reconcile the
+  // optimistic inbox bubble (swap in the DB id) or flag it as failed.
+  const sendSms = useCallback(async (to: string, body: string, leadId?: string): Promise<{ ok: boolean; messageId?: string; error?: string }> => {
+    try {
+      const res = await fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body, leadId }) });
+      const j = await res.json().catch(() => ({}));
+      return res.ok ? { ok: true, messageId: j.messageId } : { ok: false, error: j.error || `Send failed (${res.status})` };
+    } catch { return { ok: false, error: 'Network error — send did not go through.' }; }
+  }, []);
+  const sendEmailApi = useCallback(async (to: string, subject: string | undefined, body: string, leadId?: string): Promise<{ ok: boolean; messageId?: string; error?: string }> => {
+    try {
+      const res = await fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject, body, leadId }) });
+      const j = await res.json().catch(() => ({}));
+      return res.ok ? { ok: true, messageId: j.messageId } : { ok: false, error: j.error || `Send failed (${res.status})` };
+    } catch { return { ok: false, error: 'Network error — send did not go through.' }; }
+  }, []);
+
+  // Reconcile an optimistic bubble once the provider responds: swap in the DB id
+  // (so realtime doesn't double it), clear pending, or mark it failed.
+  const reconcileSent = useCallback((tempId: string, r: { ok: boolean; messageId?: string }) => {
+    setMessages((prev) => {
+      if (r.ok && r.messageId && prev.some((m) => m.id === r.messageId)) return prev.filter((m) => m.id !== tempId);
+      return prev.map((m) => (m.id === tempId ? { ...m, id: r.ok && r.messageId ? r.messageId : m.id, pending: false, failed: !r.ok } : m));
+    });
+  }, []);
+
   const sendReply = useCallback((leadId: string, body: string) => {
     const lead = leadsRef.current.find((l) => l.id === leadId);
     const thread = messages.filter((m) => m.leadId === leadId);
     const channel = (thread.length ? thread[thread.length - 1].channel : 'text') as 'text' | 'email';
-    setMessages((prev) => [...prev, { id: uid(), leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', body, time: 'now', isRead: true }]);
+    const tempId = uid();
+    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', body, time: 'now', isRead: true, pending: true }]);
     addActivity(leadId, { kind: channel, direction: 'out', ty: `${channel === 'email' ? 'Email' : 'Text'} reply sent`, time: 'Just now', body: `"${body}"` });
     const lid = enabled ? leadId : undefined;
-    if (channel === 'text' && lead?.phone) fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: lead.phone, body, leadId: lid }) }).catch(() => {});
-    if (channel === 'email' && lead?.email) fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: lead.email, subject: 'Re: Relay', body, leadId: lid }) }).catch(() => {});
-  }, [messages, addActivity, enabled]);
+    (async () => {
+      let r: { ok: boolean; messageId?: string; error?: string };
+      if (channel === 'text') r = lead?.phone ? await sendSms(lead.phone, body, lid) : { ok: false, error: 'No phone on file for this lead.' };
+      else r = lead?.email ? await sendEmailApi(lead.email, 'Re: Relay', body, lid) : { ok: false, error: 'No email on file for this lead.' };
+      reconcileSent(tempId, r);
+    })();
+  }, [messages, addActivity, enabled, sendSms, sendEmailApi, reconcileSent]);
+
+  // Re-attempt a failed outbound message from the Inbox.
+  const retrySend = useCallback((messageId: string) => {
+    const m = messages.find((x) => x.id === messageId);
+    if (!m || !m.leadId) return;
+    const lead = leadsRef.current.find((l) => l.id === m.leadId);
+    setMessages((prev) => prev.map((x) => (x.id === messageId ? { ...x, failed: false, pending: true } : x)));
+    const lid = enabled ? m.leadId : undefined;
+    (async () => {
+      let r: { ok: boolean; messageId?: string; error?: string };
+      if (m.channel === 'text') r = lead?.phone ? await sendSms(lead.phone, m.body, lid) : { ok: false, error: 'No phone on file.' };
+      else r = lead?.email ? await sendEmailApi(lead.email, m.subject, m.body, lid) : { ok: false, error: 'No email on file.' };
+      reconcileSent(messageId, r);
+    })();
+  }, [messages, enabled, sendSms, sendEmailApi, reconcileSent]);
 
   // ── Inbound calls ──────────────────────────────────────────────────────────
   const ringInbound = useCallback((leadId: string, call?: any) => setInbound({ leadId, call }), []);
@@ -311,25 +357,26 @@ export function useRelay() {
   const flowSend = useCallback((channel: 'text' | 'email', body: string, subject?: string) => {
     if (!current) return;
     const lead = leadById(current.leadId);
+    const leadId = current.leadId;
     setScore((s) => ({ ...s, [channel]: (s as any)[channel] + 1 }));
-    addActivity(current.leadId, {
+    addActivity(leadId, {
       kind: channel, direction: 'out',
       ty: channel === 'text' ? 'Text sent · ⚡Flow' : 'Email sent · ⚡Flow',
       time: 'Just now', body: subject ? `${subject} — ${body}` : body,
     });
-    // Best-effort real send (endpoints 503 when the provider isn't configured → ignored).
-    const lid = enabled ? current.leadId : undefined;
-    if (channel === 'text' && lead?.phone) {
-      fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: lead.phone, body, leadId: lid }) }).catch(() => {});
-    }
-    if (channel === 'email' && lead?.email) {
-      fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: lead.email, subject, body, leadId: lid }) }).catch(() => {});
-    }
+    // Optimistically thread it into the Inbox, then reconcile on the provider reply.
+    const tempId = uid();
+    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', subject, body, time: 'now', isRead: true, pending: true }]);
+    const lid = enabled ? leadId : undefined;
+    (async () => {
+      let r: { ok: boolean; messageId?: string; error?: string };
+      if (channel === 'text') r = lead?.phone ? await sendSms(lead.phone, body, lid) : { ok: false, error: 'No phone on file for this lead.' };
+      else r = lead?.email ? await sendEmailApi(lead.email, subject, body, lid) : { ok: false, error: 'No email on file for this lead.' };
+      reconcileSent(tempId, r);
+    })();
     setFlow((f) => ({ ...f, actionCount: f.actionCount + 1 }));
     advance('onward');
-  }, [current, addActivity, advance, leadById, enabled]);
+  }, [current, addActivity, advance, leadById, enabled, sendSms, sendEmailApi, reconcileSent]);
 
   const startNote = useCallback((activityId: string, aiText: string, adv: 'onward' | 'next_salon') => {
     setFlow((f) => ({ ...f, phase: 'note', pendingAdvance: adv, noteActivityId: activityId, noteAiText: aiText }));
@@ -474,10 +521,18 @@ export function useRelay() {
 
   const sendKeypadText = useCallback((number: string, body: string) => {
     const lead = matchLeadByNumber(number);
-    fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: number, body, leadId: enabled ? lead?.id : undefined }) }).catch(() => {});
+    // If the number belongs to a lead, thread it into the Inbox like any other send.
+    let tempId: string | null = null;
+    if (lead) {
+      tempId = uid();
+      setMessages((prev) => [...prev, { id: tempId!, leadId: lead.id, who: 'You', salon: lead.salon, channel: 'text', direction: 'out', body, time: 'now', isRead: true, pending: true }]);
+    }
+    (async () => {
+      const r = await sendSms(number, body, enabled ? lead?.id : undefined);
+      if (tempId) reconcileSent(tempId, r);
+    })();
     logDial('text', number, body);
-  }, [matchLeadByNumber, logDial, enabled]);
+  }, [matchLeadByNumber, logDial, enabled, sendSms, reconcileSent]);
 
   const saveNumberAsLead = useCallback(async (number: string, salon: string): Promise<Lead | null> => {
     const name = salon.trim() || number;
@@ -500,7 +555,7 @@ export function useRelay() {
     me, reps, signOut,
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip,
     addActivity, setStage,
-    messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply,
+    messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, retrySend,
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,

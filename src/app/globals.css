@@ -636,6 +636,12 @@
 .due-chip.due-later{background:var(--amber-soft,#fdf0d5);color:var(--amber,#b7791f)}
 .due-hint{font-size:11.5px;color:var(--ink3)}
 .mode.sched{color:var(--amber,#b7791f);font-weight:600}
+.msg-status{font-weight:600}
+.msg-status.pending{color:var(--ink3,#94a3b8)}
+.msg-status.failed{color:var(--red,#dc2626)}
+.bub.failed{border:1px solid var(--red,#dc2626);background:#fdecec}
+.msg-retry{align-self:flex-end;margin-top:4px;background:none;border:none;color:var(--accent,#2563eb);
+  font-size:11.5px;font-weight:600;cursor:pointer;padding:0}
 
 /* Public book-a-demo page */
 .book-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;

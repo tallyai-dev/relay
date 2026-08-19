@@ -338,8 +338,11 @@ function Inbox({ r }: { r: R }) {
               <div className="conv-msgs">
                 {selMsgs.map((m) => (
                   <div key={m.id} className={`cmsg ${m.direction === 'out' ? 'me' : 'them'}`}>
-                    <div className="meta">{m.direction === 'out' ? 'You' : selLead?.contact?.name || 'Them'} · {m.channel} · {m.time}</div>
-                    <div className="bub">{m.subject && <div className="subj">{m.subject}</div>}{m.body}</div>
+                    <div className="meta">{m.direction === 'out' ? 'You' : selLead?.contact?.name || 'Them'} · {m.channel} · {m.time}
+                      {m.pending && <span className="msg-status pending"> · sending…</span>}
+                      {m.failed && <span className="msg-status failed"> · not delivered</span>}</div>
+                    <div className={`bub${m.failed ? ' failed' : ''}`}>{m.subject && <div className="subj">{m.subject}</div>}{m.body}</div>
+                    {m.failed && <button className="msg-retry" onClick={() => r.retrySend(m.id)}>Retry send</button>}
                   </div>
                 ))}
               </div>
