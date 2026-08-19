@@ -840,3 +840,27 @@
   .rail button svg{width:19px;height:19px}
   .fb-dispos{grid-template-columns:1fr}
 }
+
+/* ── Floating dial button (global) ───────────────────────────────────────── */
+.fdial-fab{position:fixed;right:22px;bottom:22px;width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;
+  background:linear-gradient(140deg,#3b82f6,#2563eb);color:#fff;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 8px 24px rgba(37,99,235,.45);z-index:46;transition:transform .12s}
+.fdial-fab:hover{transform:translateY(-1px)}
+.fdial-fab:active{transform:scale(.95)}
+.fdial-fab.on{background:#0f1b2e}
+.fdial-fab svg{width:24px;height:24px}
+.fdial-pop{position:fixed;right:22px;bottom:88px;width:300px;background:#fff;border:1px solid var(--line);border-radius:16px;
+  box-shadow:0 22px 55px rgba(20,30,26,.3);z-index:46;overflow:hidden}
+.fdial-ph{padding:11px 14px;background:#0f1b2e;color:#e6eef9;font-weight:700;font-size:12.5px;display:flex;align-items:center;justify-content:space-between}
+.fdial-ph span{display:inline-flex;align-items:center;gap:8px}
+.fdial-ph svg{width:15px;height:15px}
+.fdial-x{border:none;background:rgba(255,255,255,.12);color:#e6eef9;width:24px;height:24px;border-radius:7px;font-size:15px;cursor:pointer;line-height:1}
+.fdial-kp{padding:14px}
+.fdial-kp .kp-num{font-size:22px}
+.fdial-kp .kp-grid{gap:8px}
+.fdial-kp .kp-key{border-radius:11px}
+.fdial-kp .kp-live{padding:12px 0}
+@media (max-width: 760px){
+  .fdial-fab{right:14px;bottom:70px;width:52px;height:52px}
+  .fdial-pop{right:10px;left:10px;width:auto;bottom:130px}
+}

@@ -42,6 +42,7 @@ export default function RelayApp() {
       </div>
       {importOpen && <ImportModal r={r} onClose={() => setImportOpen(false)} />}
       <IncomingBanner r={r} />
+      <FloatingDialer r={r} />
     </div>
   );
 }
@@ -851,5 +852,119 @@ function Keypad({ r }: { r: R }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// ── Floating dial button (global quick-dial keypad) ─────────────────────────
+function FloatingDialer({ r }: { r: R }) {
+  const [open, setOpen] = useState(false);
+  const [num, setNum] = useState('');
+  const [mode, setMode] = useState<'idle' | 'calling' | 'text'>('idle');
+  const [status, setStatus] = useState('');
+  const [secs, setSecs] = useState(0);
+  const [body, setBody] = useState('');
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const callRef = useRef<any>(null);
+
+  const digits = num.replace(/[^0-9]/g, '');
+  const ready = digits.length >= 10;
+  const match = ready ? r.matchLeadByNumber(num) : undefined;
+
+  useEffect(() => {
+    if (mode !== 'calling') return;
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [mode]);
+
+  // Hide on the full Keypad view (redundant) and while a call panel is up.
+  if (r.view === 'keypad' || r.activeCall) return null;
+
+  const press = (d: string) => setNum((n) => (n + d).slice(0, 18));
+  const back = () => setNum((n) => n.slice(0, -1));
+  const endCall = () => { callRef.current?.disconnect?.(); callRef.current = null; r.logDial('call', num); setMode('idle'); setStatus(''); setSecs(0); };
+  const call = async () => {
+    if (!ready) return;
+    setMode('calling'); setStatus('Connecting…'); setSecs(0);
+    const c = await placeCall(num);
+    if (c) {
+      callRef.current = c;
+      c.on('accept', () => setStatus('Connected'));
+      c.on('disconnect', () => endCall());
+      c.on('cancel', () => endCall());
+      c.on('error', (e: any) => { console.error(e); setStatus('Call error'); });
+    } else { setStatus('Voice not configured'); setTimeout(() => endCall(), 1200); }
+  };
+  const openText = () => { setBody(match?.contact ? renderTemplate(DEFAULT_SMS, match) : ''); setMode('text'); };
+  const sendText = () => { if (!body.trim()) return; r.sendKeypadText(num, body.trim()); setMode('idle'); setBody(''); setNum(''); };
+  const doSave = async () => { await r.saveNumberAsLead(num, saveName); setSaveOpen(false); setSaveName(''); setOpen(false); };
+  const close = () => { if (mode === 'calling') return; setOpen(false); setMode('idle'); };
+
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+  const ss = String(secs % 60).padStart(2, '0');
+  const keys = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
+
+  return (
+    <>
+      {open && (
+        <div className="fdial-pop">
+          <div className="fdial-ph"><span>{Icon.call} Quick dial</span><button className="fdial-x" onClick={close}>×</button></div>
+          <div className="fdial-kp">
+            <div className="kp-display">
+              <input className="kp-num" value={num} onChange={(e) => setNum(e.target.value.replace(/[^0-9+*#]/g, '').slice(0, 18))} placeholder="Enter a number" />
+              {num && mode === 'idle' && <button className="kp-back" onClick={back}>⌫</button>}
+            </div>
+            <div className="kp-match">
+              {match ? <span className="kp-hit">✓ {match.salon}</span> : ready ? <span className="kp-new">New number</span> : <span className="muted">&nbsp;</span>}
+            </div>
+            {mode === 'calling' ? (
+              <div className="kp-live">
+                <div className="kp-live-status"><span className="p" /> {status} · {mm}:{ss}</div>
+                <div className="kp-live-num">{num}</div>
+                <button className="kp-end" onClick={endCall}>End call</button>
+              </div>
+            ) : mode === 'text' ? (
+              <div className="kp-text">
+                <div className="kp-text-to">Text to {match ? match.salon : num}</div>
+                <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Type your message…" autoFocus />
+                <div className="kp-text-actions">
+                  <button className="btn sm" onClick={() => setMode('idle')}>Cancel</button>
+                  <button className="btn primary sm" onClick={sendText} disabled={!body.trim()}>Send text</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="kp-grid">
+                  {keys.map(([d, sub]) => (
+                    <button key={d} className="kp-key" onClick={() => press(d)}><span className="kd">{d}</span>{sub && <span className="ks">{sub}</span>}</button>
+                  ))}
+                </div>
+                <div className="kp-actions">
+                  <button className="kp-call" onClick={call} disabled={!ready}>{Icon.call} Call</button>
+                  <button className="kp-textbtn" onClick={openText} disabled={!ready}>{Icon.text} Text</button>
+                </div>
+                <div className="kp-save">
+                  {match ? (
+                    <button className="btn sm" onClick={() => { r.setActiveLeadId(match.id); r.setView('dialer'); setOpen(false); }}>Open {match.salon} →</button>
+                  ) : saveOpen ? (
+                    <div className="kp-save-row">
+                      <input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="Salon / name" autoFocus />
+                      <button className="btn primary sm" onClick={doSave} disabled={!ready}>Save</button>
+                      <button className="btn sm" onClick={() => setSaveOpen(false)}>×</button>
+                    </div>
+                  ) : (
+                    <button className="btn sm" onClick={() => setSaveOpen(true)} disabled={!ready}>+ Save as lead</button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      <button className={`fdial-fab ${open ? 'on' : ''}`} onClick={() => (open ? close() : setOpen(true))} title="Dial a number" aria-label="Dial a number">
+        {open ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7" cy="6" r="1.3" /><circle cx="12" cy="6" r="1.3" /><circle cx="17" cy="6" r="1.3" /><circle cx="7" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="17" cy="12" r="1.3" /><circle cx="7" cy="18" r="1.3" /><circle cx="12" cy="18" r="1.3" /><circle cx="17" cy="18" r="1.3" /></svg>}
+      </button>
+    </>
   );
 }
