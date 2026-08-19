@@ -1,9 +1,9 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRelay } from '@/hooks/useRelay';
-import type { Lead } from '@/lib/types';
+import type { Lead, Cadence, CadenceStep, Channel } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT } from '@/lib/cadence';
-import { placeCall } from '@/lib/voice';
+import { placeCall, normalizePhone } from '@/lib/voice';
 
 type R = ReturnType<typeof useRelay>;
 
@@ -32,8 +32,10 @@ export default function RelayApp() {
         <div className="content">
           {r.view === 'leads' && <LeadsView r={r} onImport={() => setImportOpen(true)} />}
           {r.view === 'dialer' && <Dialer r={r} />}
+          {r.view === 'keypad' && <Keypad r={r} />}
           {r.view === 'inbox' && <Inbox r={r} />}
-          {(r.view === 'cadences' || r.view === 'reports' || r.view === 'mobile') && (
+          {r.view === 'cadences' && <CadenceBuilder r={r} />}
+          {(r.view === 'reports' || r.view === 'mobile') && (
             <Placeholder view={r.view} />
           )}
         </div>
@@ -109,7 +111,8 @@ function Rail({ r }: { r: R }) {
     <nav className="rail">
       <div className="logo">R</div>
       {btn('leads', 'Leads', <path d="M3 6h18M3 12h18M3 18h18" />)}
-      {btn('dialer', 'Dialer', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />)}
+      {btn('dialer', 'Workspace', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />)}
+      {btn('keypad', 'Keypad', <><circle cx="7" cy="6" r="1.3" /><circle cx="12" cy="6" r="1.3" /><circle cx="17" cy="6" r="1.3" /><circle cx="7" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="17" cy="12" r="1.3" /><circle cx="7" cy="18" r="1.3" /><circle cx="12" cy="18" r="1.3" /><circle cx="17" cy="18" r="1.3" /></>)}
       <button className={r.view === 'inbox' ? 'on' : ''} title="Inbox" onClick={() => r.setView('inbox')} style={{ position: 'relative' }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16v16H4z" /><path d="M4 9h5l2 3h2l2-3h5" /></svg>
         {r.unreadCount > 0 && <span className="badge">{r.unreadCount}</span>}
@@ -324,7 +327,12 @@ function Dialer({ r }: { r: R }) {
 
           <div className="qgrid">
             <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone}</div></div>
-            <div className="qc"><div className="qk">Cadence</div><div className="qv">Cold Salon · {lead.cadencePos + 1}/5</div></div>
+            <div className="qc"><div className="qk">Cadence</div>
+              <select className="qv-select" value={r.cadences.some((c) => c.id === lead.cadenceId) ? lead.cadenceId : (r.cadences[0]?.id || '')}
+                onChange={(e) => r.assignCadence(lead.id, e.target.value)} onClick={(e) => e.stopPropagation()}>
+                {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
             <div className="qc"><div className="qk">Last touch</div><div className="qv">{lead.lastTouch}</div></div>
             <div className="qc"><div className="qk">Objection</div><div className="qv">{lead.objection}</div></div>
           </div>
@@ -426,7 +434,9 @@ function FlowBar({ r, lead }: { r: R; lead: Lead }) {
 }
 
 function ComposeText({ r, lead }: { r: R; lead: Lead }) {
-  const [body, setBody] = useState(renderTemplate(DEFAULT_SMS, lead));
+  const cad = r.cadenceById(lead.cadenceId);
+  const tpl = cad?.steps.find((s) => s.channel === 'text' && s.template)?.template || DEFAULT_SMS;
+  const [body, setBody] = useState(renderTemplate(tpl, lead));
   return (
     <div className="flowbar text compose">
       <div className="compose-head"><span className="fb-badge">{Icon.text} Text · Action {r.flow.actionCount + 1}</span>
@@ -439,8 +449,10 @@ function ComposeText({ r, lead }: { r: R; lead: Lead }) {
 }
 
 function ComposeEmail({ r, lead }: { r: R; lead: Lead }) {
-  const [subj, setSubj] = useState(renderTemplate(DEFAULT_EMAIL_SUBJECT, lead));
-  const [body, setBody] = useState(renderTemplate(DEFAULT_EMAIL_BODY, lead));
+  const cad = r.cadenceById(lead.cadenceId);
+  const estep = cad?.steps.find((s) => s.channel === 'email' && (s.template || s.subject));
+  const [subj, setSubj] = useState(renderTemplate(estep?.subject || DEFAULT_EMAIL_SUBJECT, lead));
+  const [body, setBody] = useState(renderTemplate(estep?.template || DEFAULT_EMAIL_BODY, lead));
   return (
     <div className="flowbar email compose">
       <div className="compose-head"><span className="fb-badge">{Icon.email} Email · Action {r.flow.actionCount + 1}</span>
@@ -554,5 +566,238 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
         <button className="end" onClick={end}>End &amp; log</button>
       </div>
     </div>
+  );
+}
+
+// ── Cadence builder ─────────────────────────────────────────────────────────
+const CH_META: Record<Channel, { label: string; icon: React.ReactNode; color: string }> = {
+  call: { label: 'Call', icon: Icon.call, color: 'var(--accent)' },
+  text: { label: 'Text', icon: Icon.text, color: 'var(--purple, #6d5aa8)' },
+  email: { label: 'Email', icon: Icon.email, color: 'var(--blue, #3a6ea5)' },
+  wait: { label: 'Wait', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>, color: '#8a97ab' },
+};
+
+function CadenceBuilder({ r }: { r: R }) {
+  const [selId, setSelId] = useState<string>(r.cadences[0]?.id || '');
+  const [draft, setDraft] = useState<Cadence | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const c = r.cadences.find((x) => x.id === selId);
+    if (!c) { if (r.cadences[0]) setSelId(r.cadences[0].id); return; }
+    setDraft(JSON.parse(JSON.stringify(c)));
+    setDirty(false);
+  }, [selId, r.cadences]);
+
+  const patchDraft = (fn: (d: Cadence) => Cadence) => { setDraft((d) => (d ? fn(d) : d)); setDirty(true); };
+  const updStep = (i: number, patch: Partial<CadenceStep>) =>
+    patchDraft((d) => ({ ...d, steps: d.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) }));
+  const addStep = () => patchDraft((d) => ({ ...d, steps: [...d.steps, { position: d.steps.length, channel: 'call', waitMinutes: 0 }] }));
+  const removeStep = (i: number) => patchDraft((d) => ({ ...d, steps: d.steps.filter((_, j) => j !== i) }));
+  const moveStep = (i: number, dir: -1 | 1) => patchDraft((d) => {
+    const j = i + dir; if (j < 0 || j >= d.steps.length) return d;
+    const steps = d.steps.slice(); [steps[i], steps[j]] = [steps[j], steps[i]]; return { ...d, steps };
+  });
+
+  const save = async () => { if (!draft) return; setSaving(true); await r.saveCadence(draft); setSaving(false); setDirty(false); };
+  const create = async () => { const c = await r.newCadence('New cadence'); setSelId(c.id); };
+  const del = async () => { if (!draft) return; await r.removeCadence(draft.id); setSelId(r.cadences.find((c) => c.id !== draft.id)?.id || ''); };
+
+  const usedBy = (id: string) => r.leads.filter((l) => l.cadenceId === id).length;
+
+  return (
+    <section className="view on">
+      <div className="page-head">
+        <div><h1>Cadences</h1><p>{r.cadences.length} cadence{r.cadences.length === 1 ? '' : 's'} · build the call / text / email sequence Flow works through</p></div>
+        <button className="btn primary" onClick={create}>+ New cadence</button>
+      </div>
+      <div className="cadbuild">
+        <div className="cad-list">
+          {r.cadences.map((c) => (
+            <button key={c.id} className={`cad-li ${c.id === selId ? 'on' : ''}`} onClick={() => setSelId(c.id)}>
+              <div className="cad-nm">{c.name}</div>
+              <div className="cad-mt">{c.steps.length} step{c.steps.length === 1 ? '' : 's'} · {usedBy(c.id)} lead{usedBy(c.id) === 1 ? '' : 's'}</div>
+            </button>
+          ))}
+          {r.cadences.length === 0 && <div className="muted" style={{ padding: 12 }}>No cadences yet — create one.</div>}
+        </div>
+
+        {draft ? (
+          <div className="cad-edit">
+            <div className="cad-edit-head">
+              <input className="cad-name-in" value={draft.name} onChange={(e) => patchDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Cadence name" />
+              <div style={{ display: 'flex', gap: 8 }}>
+                {r.cadences.length > 1 && <button className="btn danger sm" onClick={del}>Delete</button>}
+                <button className="btn primary" onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}</button>
+              </div>
+            </div>
+
+            <div className="cad-steps">
+              {draft.steps.map((s, i) => (
+                <div key={i} className={`cad-step ch-${s.channel}`}>
+                  <div className="cad-step-n" style={{ color: CH_META[s.channel].color }}>{i + 1}</div>
+                  <div className="cad-step-body">
+                    <div className="cad-step-row">
+                      <label className="cad-chan">
+                        <span className="cad-chan-ic" style={{ color: CH_META[s.channel].color }}>{CH_META[s.channel].icon}</span>
+                        <select value={s.channel} onChange={(e) => updStep(i, { channel: e.target.value as Channel })}>
+                          {(['call', 'text', 'email', 'wait'] as Channel[]).map((ch) => <option key={ch} value={ch}>{CH_META[ch].label}</option>)}
+                        </select>
+                      </label>
+                      <label className="cad-gap">Day gap
+                        <input type="number" min={0} step={0.5} value={+(s.waitMinutes / 1440).toFixed(2)}
+                          onChange={(e) => updStep(i, { waitMinutes: Math.max(0, Math.round(parseFloat(e.target.value || '0') * 1440)) })} />
+                      </label>
+                      <div className="cad-step-ctrls">
+                        <button className="ico" title="Move up" disabled={i === 0} onClick={() => moveStep(i, -1)}>↑</button>
+                        <button className="ico" title="Move down" disabled={i === draft.steps.length - 1} onClick={() => moveStep(i, 1)}>↓</button>
+                        <button className="ico del" title="Remove" onClick={() => removeStep(i)}>✕</button>
+                      </div>
+                    </div>
+                    {s.channel === 'email' && (
+                      <input className="cad-subj" value={s.subject || ''} onChange={(e) => updStep(i, { subject: e.target.value })} placeholder="Email subject — use {salon}, {first_name}" />
+                    )}
+                    {(s.channel === 'text' || s.channel === 'email') && (
+                      <textarea className="cad-tpl" value={s.template || ''} onChange={(e) => updStep(i, { template: e.target.value })}
+                        placeholder={s.channel === 'text' ? 'Text message — use {salon}, {first_name}' : 'Email body — use {salon}, {first_name}'} />
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="btn add-step" onClick={addStep}>+ Add step</button>
+            <div className="cad-hint">Merge tags: <b>{'{salon}'}</b> and <b>{'{first_name}'}</b> fill in per lead. Flow runs the call/text/email steps in order (wait steps are for scheduling and skipped in a live session).</div>
+          </div>
+        ) : (
+          <div className="cad-edit"><div className="muted" style={{ padding: 24 }}>Select or create a cadence to edit.</div></div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ── Keypad (type-a-number dialer) ───────────────────────────────────────────
+function Keypad({ r }: { r: R }) {
+  const [num, setNum] = useState('');
+  const [mode, setMode] = useState<'idle' | 'calling' | 'text'>('idle');
+  const [status, setStatus] = useState('');
+  const [secs, setSecs] = useState(0);
+  const [body, setBody] = useState('');
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const callRef = useRef<any>(null);
+
+  const digits = num.replace(/[^0-9]/g, '');
+  const ready = digits.length >= 10;
+  const match = ready ? r.matchLeadByNumber(num) : undefined;
+
+  useEffect(() => {
+    if (mode !== 'calling') return;
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [mode]);
+
+  const press = (d: string) => { if (mode === 'idle') setNum((n) => (n + d).slice(0, 18)); };
+  const back = () => setNum((n) => n.slice(0, -1));
+
+  const endCall = () => { callRef.current?.disconnect?.(); callRef.current = null; r.logDial('call', num); setMode('idle'); setStatus(''); setSecs(0); };
+
+  const call = async () => {
+    if (!ready) return;
+    setMode('calling'); setStatus('Connecting…'); setSecs(0);
+    const c = await placeCall(num);
+    if (c) {
+      callRef.current = c;
+      c.on('accept', () => setStatus('Connected'));
+      c.on('disconnect', () => endCall());
+      c.on('cancel', () => endCall());
+      c.on('error', (e: any) => { console.error(e); setStatus('Call error'); });
+    } else {
+      // Voice not configured — log the attempt so the number still lands in history.
+      setStatus('Voice not configured'); setTimeout(() => endCall(), 1200);
+    }
+  };
+
+  const openText = () => { setBody(match?.contact ? renderTemplate(DEFAULT_SMS, match) : ''); setMode('text'); };
+  const sendText = () => { if (!body.trim()) return; r.sendKeypadText(num, body.trim()); setMode('idle'); setBody(''); };
+
+  const doSave = async () => { await r.saveNumberAsLead(num, saveName); setSaveOpen(false); setSaveName(''); };
+
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+  const ss = String(secs % 60).padStart(2, '0');
+  const keys = [['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']];
+
+  return (
+    <section className="view on">
+      <div className="keypad-wrap">
+        <div className="keypad-card">
+          <div className="kp-display">
+            <input className="kp-num" value={num} onChange={(e) => setNum(e.target.value.replace(/[^0-9+*#]/g, '').slice(0, 18))} placeholder="Enter a number" />
+            {num && mode === 'idle' && <button className="kp-back" onClick={back} title="Delete">⌫</button>}
+          </div>
+          <div className="kp-match">
+            {match ? <span className="kp-hit">✓ {match.salon}{match.city ? ` · ${match.city}` : ''}</span>
+              : ready ? <span className="kp-new">New number — not in your leads</span>
+              : <span className="muted">&nbsp;</span>}
+          </div>
+
+          {mode === 'calling' ? (
+            <div className="kp-live">
+              <div className="kp-live-status"><span className="p" /> {status} · {mm}:{ss}</div>
+              <div className="kp-live-num">{num}</div>
+              <button className="kp-end" onClick={endCall}>End call</button>
+            </div>
+          ) : mode === 'text' ? (
+            <div className="kp-text">
+              <div className="kp-text-to">Text to {match ? match.salon : num}</div>
+              <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Type your message…" autoFocus />
+              <div className="kp-text-actions">
+                <button className="btn sm" onClick={() => setMode('idle')}>Cancel</button>
+                <button className="btn primary sm" onClick={sendText} disabled={!body.trim()}>Send text</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="kp-grid">
+                {keys.map(([d, sub]) => (
+                  <button key={d} className="kp-key" onClick={() => press(d)}>
+                    <span className="kd">{d}</span>{sub && <span className="ks">{sub}</span>}
+                  </button>
+                ))}
+              </div>
+              <div className="kp-actions">
+                <button className="kp-call" onClick={call} disabled={!ready} title={ready ? 'Call' : 'Enter a full number'}>{Icon.call} Call</button>
+                <button className="kp-textbtn" onClick={openText} disabled={!ready}>{Icon.text} Text</button>
+              </div>
+              <div className="kp-save">
+                {match ? (
+                  <button className="btn sm" onClick={() => { r.setActiveLeadId(match.id); r.setView('dialer'); }}>Open {match.salon} →</button>
+                ) : saveOpen ? (
+                  <div className="kp-save-row">
+                    <input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="Salon / name" autoFocus />
+                    <button className="btn primary sm" onClick={doSave} disabled={!ready}>Save lead</button>
+                    <button className="btn sm" onClick={() => setSaveOpen(false)}>×</button>
+                  </div>
+                ) : (
+                  <button className="btn sm" onClick={() => setSaveOpen(true)} disabled={!ready}>+ Save as lead</button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="kp-recent">
+          <div className="kp-recent-h">Recent</div>
+          {r.recentDials.length === 0 && <div className="muted" style={{ padding: '10px 4px' }}>Calls &amp; texts you make here show up in this list.</div>}
+          {r.recentDials.map((d) => (
+            <button key={d.id} className="kp-recent-li" onClick={() => setNum(d.number)}>
+              <span className="kr-ic">{d.kind === 'call' ? Icon.call : Icon.text}</span>
+              <span className="kr-body"><span className="kr-num">{d.salon || d.number}</span><span className="kr-sub">{d.salon ? d.number : (d.kind === 'call' ? 'Call' : 'Text')} · {d.time}</span></span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

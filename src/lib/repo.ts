@@ -1,6 +1,6 @@
 'use client';
 import { supabaseBrowser } from './supabase';
-import type { Lead, Activity, Stage, Message, Rep } from './types';
+import type { Lead, Activity, Stage, Message, Rep, Cadence, CadenceStep } from './types';
 
 // Data access layer. Every function no-ops (returns empty / does nothing) when
 // Supabase isn't configured, so the app keeps running on seeded mock data.
@@ -192,6 +192,88 @@ export interface ImportRow {
   email?: string;
   contactName?: string;
   role?: string;
+}
+
+// ── Cadences (team-wide config; RLS: team_all) ──────────────────────────────
+export async function fetchCadences(): Promise<Cadence[]> {
+  const sb = supabaseBrowser();
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from('cadences')
+    .select('id,name,cadence_steps(position,channel,wait_minutes,template,subject)')
+    .order('created_at', { ascending: true });
+  if (error) { console.error('fetchCadences', error); return []; }
+  return (data || []).map((c: any): Cadence => ({
+    id: c.id,
+    name: c.name,
+    steps: (c.cadence_steps || [])
+      .slice()
+      .sort((a: any, b: any) => a.position - b.position)
+      .map((s: any): CadenceStep => ({
+        position: s.position,
+        channel: s.channel,
+        waitMinutes: s.wait_minutes ?? 0,
+        template: s.template || undefined,
+        subject: s.subject || undefined,
+      })),
+  }));
+}
+
+export async function createCadence(name: string): Promise<string | null> {
+  const sb = supabaseBrowser();
+  if (!sb) return null;
+  const { data, error } = await sb.from('cadences').insert({ name }).select('id').single();
+  if (error) { console.error('createCadence', error); return null; }
+  return data.id as string;
+}
+
+export async function renameCadence(id: string, name: string): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('cadences').update({ name }).eq('id', id);
+}
+
+export async function deleteCadence(id: string): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('cadences').delete().eq('id', id); // cadence_steps cascade
+}
+
+// Replace-all: wipe a cadence's steps and re-insert in order.
+export async function saveCadenceSteps(cadenceId: string, steps: CadenceStep[]): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('cadence_steps').delete().eq('cadence_id', cadenceId);
+  if (!steps.length) return;
+  const payload = steps.map((s, i) => ({
+    cadence_id: cadenceId,
+    position: i,
+    channel: s.channel,
+    wait_minutes: s.waitMinutes || 0,
+    template: s.template || null,
+    subject: s.subject || null,
+  }));
+  const { error } = await sb.from('cadence_steps').insert(payload);
+  if (error) console.error('saveCadenceSteps', error);
+}
+
+export async function assignLeadCadence(leadId: string, cadenceId: string): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('leads').update({ cadence_id: cadenceId, cadence_pos: 0 }).eq('id', leadId);
+}
+
+// Quick-create a lead from the keypad (a dialed number the rep wants to keep).
+export async function createLeadQuick(salon: string, phone: string, ownerRepId?: string): Promise<Lead | null> {
+  const sb = supabaseBrowser();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from('leads')
+    .insert({ salon, phone: phone || null, stage: 'new', cadence_id: DEFAULT_CADENCE, cadence_pos: 0, owner_rep_id: ownerRepId ?? null })
+    .select('*, contacts(id,name,role,phone,email,is_primary)')
+    .single();
+  if (error) { console.error('createLeadQuick', error); return null; }
+  return rowToLead(data);
 }
 
 export async function bulkInsertLeads(rows: ImportRow[], ownerRepId?: string): Promise<number> {

@@ -1,12 +1,27 @@
 'use client';
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { Lead, Activity, Channel, Disposition, Stage, Message, Rep } from '@/lib/types';
+import type { Lead, Activity, Channel, Disposition, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
-import { planForStage, callAttempt, AI_NOTE } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut } from '@/lib/repo';
+import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT } from '@/lib/cadence';
+import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
-export type View = 'leads' | 'dialer' | 'inbox' | 'cadences' | 'reports' | 'mobile';
+export type View = 'leads' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile';
+
+const DEFAULT_CADENCE_ID = '11111111-1111-1111-1111-111111111111';
+const SEED_CADENCES: Cadence[] = [
+  {
+    id: 'cad-default',
+    name: 'Cold Salon Outbound',
+    steps: [
+      { position: 0, channel: 'call', waitMinutes: 0 },
+      { position: 1, channel: 'call', waitMinutes: 1440 },
+      { position: 2, channel: 'text', waitMinutes: 60, template: DEFAULT_SMS },
+      { position: 3, channel: 'email', waitMinutes: 0, template: DEFAULT_EMAIL_BODY, subject: DEFAULT_EMAIL_SUBJECT },
+    ],
+  },
+];
+export interface RecentDial { id: string; number: string; kind: 'call' | 'text'; body?: string; time: string; leadId?: string; salon?: string }
 export type FlowPhase = 'action' | 'incall' | 'dispo' | 'connected' | 'note';
 interface QueueItem { leadId: string; plan: Channel[]; step: number }
 interface FlowState {
@@ -41,8 +56,12 @@ export function useRelay() {
   const [inbound, setInbound] = useState<{ leadId: string; call?: any } | null>(null);
   const [me, setMe] = useState<Rep | null>(null);
   const [reps, setReps] = useState<Rep[]>([]);
+  const [cadences, setCadences] = useState<Cadence[]>(SEED_CADENCES);
+  const [recentDials, setRecentDials] = useState<RecentDial[]>([]);
   const leadsRef = useRef<Lead[]>(leads);
   leadsRef.current = leads;
+  const cadencesRef = useRef<Cadence[]>(cadences);
+  cadencesRef.current = cadences;
 
   const enabled = repoEnabled(); // Supabase-backed vs in-memory demo
   const loaded = useRef<Set<string>>(new Set());
@@ -52,13 +71,14 @@ export function useRelay() {
     if (!enabled) return;
     let alive = true;
     (async () => {
-      const [rows, msgs, meRow, repRows] = await Promise.all([fetchLeads(), fetchMessages(), fetchMe(), fetchReps()]);
+      const [rows, msgs, meRow, repRows, cadRows] = await Promise.all([fetchLeads(), fetchMessages(), fetchMe(), fetchReps(), fetchCadences()]);
       if (!alive) return;
       setLeads(rows);                 // may be empty for a brand-new rep — that's correct
       if (rows.length) setActiveLeadId(rows[0].id);
       setMessages(msgs);
       setMe(meRow);
       setReps(repRows);
+      if (cadRows.length) setCadences(cadRows);
       setScore({ calls: 0, texts: 0, emails: 0, demos: 0 }); // real session starts at zero
     })();
     const unsub = subscribeMessages((m) => {
@@ -142,7 +162,13 @@ export function useRelay() {
   const startFlow = useCallback(() => {
     const queue: QueueItem[] = leadsRef.current
       .filter((l) => l.stage !== 'won')
-      .map((l) => ({ leadId: l.id, plan: planForStage(l.stage), step: 0 }));
+      .map((l) => {
+        // Run the lead's assigned cadence (its call/text/email steps, skipping waits);
+        // fall back to the stage-based default plan when no cadence is set.
+        const cad = cadencesRef.current.find((c) => c.id === l.cadenceId);
+        const chans = (cad?.steps || []).filter((s) => s.channel !== 'wait').map((s) => s.channel as Channel);
+        return { leadId: l.id, plan: chans.length ? chans : planForStage(l.stage), step: 0 };
+      });
     if (!queue.length) return; // nothing to work
     setFlow({ on: true, queue, pos: 0, phase: 'action', actionCount: 0, pendingAdvance: null, noteActivityId: null, noteAiText: null, paused: false });
     setActiveLeadId(queue[0].leadId);
@@ -331,6 +357,76 @@ export function useRelay() {
     advance('next_salon');
   }, [current, addActivity, advance]);
 
+  // ── Cadences ────────────────────────────────────────────────────────────────
+  const cadenceById = useCallback((id?: string) => cadences.find((c) => c.id === id), [cadences]);
+
+  const newCadence = useCallback(async (name: string): Promise<Cadence> => {
+    let id = 'cad' + Date.now();
+    if (enabled) { const dbId = await createCadence(name); if (dbId) id = dbId; }
+    const c: Cadence = { id, name, steps: [{ position: 0, channel: 'call', waitMinutes: 0 }] };
+    setCadences((prev) => [...prev, c]);
+    if (enabled) saveCadenceSteps(id, c.steps);
+    return c;
+  }, [enabled]);
+
+  const saveCadence = useCallback(async (cad: Cadence) => {
+    setCadences((prev) => prev.map((c) => (c.id === cad.id ? cad : c)));
+    if (enabled) { await renameCadence(cad.id, cad.name); await saveCadenceSteps(cad.id, cad.steps); }
+  }, [enabled]);
+
+  const removeCadence = useCallback(async (id: string) => {
+    setCadences((prev) => prev.filter((c) => c.id !== id));
+    if (enabled) await deleteCadence(id);
+  }, [enabled]);
+
+  const assignCadence = useCallback((leadId: string, cadenceId: string) => {
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, cadenceId, cadencePos: 0 } : l)));
+    if (enabled) assignLeadCadence(leadId, cadenceId);
+  }, [enabled]);
+
+  // ── Keypad (type-a-number dialer) ────────────────────────────────────────────
+  const matchLeadByNumber = useCallback((number: string): Lead | undefined => {
+    const d = number.replace(/[^0-9]/g, '').slice(-10);
+    if (d.length < 10) return undefined;
+    return leadsRef.current.find((l) => (l.phone || '').replace(/[^0-9]/g, '').slice(-10) === d);
+  }, []);
+
+  const logDial = useCallback((kind: 'call' | 'text', number: string, body?: string) => {
+    const lead = matchLeadByNumber(number);
+    const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    setRecentDials((prev) => [{ id: uid(), number, kind, body, time, leadId: lead?.id, salon: lead?.salon }, ...prev].slice(0, 40));
+    setScore((s) => ({ ...s, [kind === 'call' ? 'calls' : 'texts']: (s as any)[kind === 'call' ? 'calls' : 'texts'] + 1 }));
+    if (lead) {
+      addActivity(lead.id, {
+        kind, direction: 'out',
+        ty: kind === 'call' ? 'Call — from keypad' : 'Text — from keypad',
+        time: 'Just now', body: body || `Dialed ${number}`,
+      });
+    }
+  }, [matchLeadByNumber, addActivity]);
+
+  const sendKeypadText = useCallback((number: string, body: string) => {
+    const lead = matchLeadByNumber(number);
+    fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: number, body, leadId: enabled ? lead?.id : undefined }) }).catch(() => {});
+    logDial('text', number, body);
+  }, [matchLeadByNumber, logDial, enabled]);
+
+  const saveNumberAsLead = useCallback(async (number: string, salon: string): Promise<Lead | null> => {
+    const name = salon.trim() || number;
+    if (enabled) {
+      const lead = await createLeadQuick(name, number, me?.id);
+      if (lead) { setLeads((prev) => [...prev, lead]); setActiveLeadId(lead.id); setView('dialer'); return lead; }
+      return null;
+    }
+    const lead: Lead = {
+      id: 'kp' + Date.now(), salon: name, city: '', phone: number, stage: 'new',
+      cadenceId: DEFAULT_CADENCE_ID, cadencePos: 0, contact: { id: 'c', name: '—', role: '—' }, lastTouch: 'New',
+    };
+    setLeads((prev) => [...prev, lead]); setActiveLeadId(lead.id); setView('dialer');
+    return lead;
+  }, [enabled, me]);
+
   return {
     view, setView, leads, activities, score, activeLeadId, setActiveLeadId, leadById,
     flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads,
@@ -339,5 +435,7 @@ export function useRelay() {
     addActivity, setStage,
     messages, activeThreadLead, unreadCount, openThread, sendReply,
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
+    cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence,
+    recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
   };
 }
