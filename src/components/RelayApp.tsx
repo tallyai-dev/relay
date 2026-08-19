@@ -262,7 +262,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
     else if (booking !== 'all' && l.bookingSystem !== booking) return false;
     if (due === 'due' && !dueSet.has(l.id)) return false;
     if (due === 'sched' && !schedSet.has(l.id)) return false;
-    if (needsEnrich && l.phone && l.website && l.bookingSystem) return false;
+    if (needsEnrich && l.phone && l.email && l.website && l.bookingSystem) return false;
     return true;
   });
 
@@ -455,8 +455,9 @@ function EnrichView({ r }: { r: R }) {
 
   // Only offer fields that are actually missing / new on the lead.
   const newFields = (lead: Lead | undefined, res: EnrichResult) => {
-    const f: { phone?: string; city?: string; website?: string; bookingSystem?: string } = {};
+    const f: { phone?: string; email?: string; city?: string; website?: string; bookingSystem?: string } = {};
     if (res.phone && !lead?.phone) f.phone = res.phone;
+    if (res.email && !lead?.email) f.email = res.email;
     if (res.website && !lead?.website) f.website = res.website;
     if (res.bookingSystem && !lead?.bookingSystem) f.bookingSystem = res.bookingSystem;
     if (res.city && !lead?.city) f.city = res.city;
@@ -488,6 +489,7 @@ function EnrichView({ r }: { r: R }) {
   const missChips = (l: Lead) => (
     <span className="miss">
       {!l.phone && <span className="mchip">No phone</span>}
+      {!l.email && <span className="mchip">No email</span>}
       {!l.website && <span className="mchip">No website</span>}
       {!l.bookingSystem && <span className="mchip">No booking</span>}
     </span>
@@ -496,7 +498,7 @@ function EnrichView({ r }: { r: R }) {
   return (
     <section className="view on">
       <div className="page-head">
-        <div><h1>Enrich leads</h1><p>{leads.length} lead{leads.length === 1 ? '' : 's'} missing phone, website, or booking platform · filled from Google Places</p></div>
+        <div><h1>Enrich leads</h1><p>{leads.length} lead{leads.length === 1 ? '' : 's'} missing phone, email, website, or booking · filled from Google &amp; the salon’s site</p></div>
         {leads.length > 0 && <button className="btn primary" onClick={enrichAll}>✨ Enrich all {leads.length}</button>}
       </div>
       {bulk && <div className="deploy-flash">{bulk}</div>}
@@ -527,6 +529,7 @@ function EnrichView({ r }: { r: R }) {
                 ) : (
                   <>
                     {selRes.phone && <div className="found"><span className="k">Phone</span><span className="v">{selRes.phone}</span>{selLead.phone ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
+                    {selRes.email && <div className="found"><span className="k">Email</span><span className="v">{selRes.email}</span>{selLead.email ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
                     {selRes.website && <div className="found"><span className="k">Website</span><span className="v">{selRes.website}</span>{selLead.website ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
                     {selRes.bookingSystem && <div className="found"><span className="k">Booking</span><span className="v"><span className="book-chip">{selRes.bookingSystem}</span></span>{selLead.bookingSystem ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
                     {selRes.city && <div className="found"><span className="k">City</span><span className="v">{selRes.city}</span>{selLead.city ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
@@ -691,8 +694,9 @@ function LeadEnrich({ r, lead }: { r: R; lead: Lead }) {
     const res = await r.enrichLead(lead.id);
     setBusy(false);
     if (!res.found) { setMsg('No Google match'); setTimeout(() => setMsg(null), 4000); return; }
-    const f: { phone?: string; city?: string; website?: string; bookingSystem?: string } = {};
+    const f: { phone?: string; email?: string; city?: string; website?: string; bookingSystem?: string } = {};
     if (res.phone && !lead.phone) f.phone = res.phone;
+    if (res.email && !lead.email) f.email = res.email;
     if (res.website && !lead.website) f.website = res.website;
     if (res.bookingSystem && !lead.bookingSystem) f.bookingSystem = res.bookingSystem;
     if (res.city && !lead.city) f.city = res.city;
@@ -764,6 +768,7 @@ function Dialer({ r }: { r: R }) {
 
           <div className="qgrid">
             <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone || <span className="muted">—</span>}</div></div>
+            <div className="qc"><div className="qk">Email</div><div className="qv">{lead.email ? <a className="qv-link" href={`mailto:${lead.email}`}>{lead.email}</a> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Booking</div><div className="qv">{lead.bookingSystem ? <span className="book-chip">{lead.bookingSystem}</span> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Website</div><div className="qv">{lead.website ? <a className="qv-link" href={`https://${lead.website}`} target="_blank" rel="noreferrer">{lead.website}</a> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Cadence</div>
