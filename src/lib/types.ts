@@ -89,6 +89,7 @@ export interface Message {
   body: string;
   time: string;
   isRead: boolean;
+  phone?: string;    // the counterpart number (their number), for threading when no lead
   pending?: boolean; // optimistic send in flight
   failed?: boolean;  // provider rejected the send
 }

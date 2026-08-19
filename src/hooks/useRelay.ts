@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -40,6 +40,7 @@ interface ActiveCall { leadId: string; direction: 'out' | 'in'; viaFlow: boolean
 
 const uid = () => 'x' + Math.random().toString(36).slice(2, 9);
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+const last10 = (p?: string) => (p || '').replace(/\D/g, '').slice(-10);
 
 const DAY_MS = 864e5;
 const endOfToday = () => { const d = new Date(); d.setHours(23, 59, 59, 999); return d.getTime(); };
@@ -266,12 +267,32 @@ export function useRelay() {
 
   // ── Inbox ──────────────────────────────────────────────────────────────────
   const unreadCount = messages.filter((m) => !m.isRead && m.direction === 'in').length;
-  const openThread = useCallback((leadId: string) => {
-    setActiveThreadLead(leadId);
-    setActiveLeadId(leadId);
-    setMessages((prev) => prev.map((m) => (m.leadId === leadId ? { ...m, isRead: true } : m)));
-    if (enabled) markThreadRead(leadId);
-  }, [enabled]);
+
+  // A message threads under its lead when it has one; otherwise under the
+  // counterpart phone number — and if that number matches a lead we already
+  // have, it merges into that lead's thread (covers texts whose lead_id is null
+  // because the inbound webhook couldn't match them at the time).
+  const threadKeyForMessage = useCallback((m: Message): string | null => {
+    if (m.leadId) return m.leadId;
+    const d = last10(m.phone);
+    if (d.length === 10) {
+      const lead = leadsRef.current.find((l) => last10(l.phone) === d);
+      return lead ? lead.id : 'tel:' + d;
+    }
+    return m.phone ? 'tel:' + (m.phone || '').trim() : null;
+  }, []);
+
+  const openThread = useCallback((key: string) => {
+    setActiveThreadLead(key);
+    if (!key.startsWith('tel:')) setActiveLeadId(key);
+    const ids: string[] = [];
+    setMessages((prev) => prev.map((m) => {
+      if (threadKeyForMessage(m) === key && !m.isRead && m.direction === 'in') { ids.push(m.id); return { ...m, isRead: true }; }
+      return m;
+    }));
+    // Persist read only for real DB rows (uuid ids; skip local temp 'x…' ids).
+    if (enabled) { const dbIds = ids.filter((id) => id.length > 20); if (dbIds.length) markMessagesRead(dbIds); }
+  }, [enabled, threadKeyForMessage]);
   const closeThread = useCallback(() => setActiveThreadLead(null), []);
 
   // Low-level senders. Return the provider result so callers can reconcile the
@@ -305,7 +326,7 @@ export function useRelay() {
     const thread = messages.filter((m) => m.leadId === leadId);
     const channel = (thread.length ? thread[thread.length - 1].channel : 'text') as 'text' | 'email';
     const tempId = uid();
-    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', body, time: 'now', isRead: true, pending: true }]);
+    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', body, time: 'now', isRead: true, pending: true, phone: lead?.phone }]);
     addActivity(leadId, { kind: channel, direction: 'out', ty: `${channel === 'email' ? 'Email' : 'Text'} reply sent`, time: 'Just now', body: `"${body}"` });
     const lid = enabled ? leadId : undefined;
     (async () => {
@@ -315,6 +336,16 @@ export function useRelay() {
       reconcileSent(tempId, r);
     })();
   }, [messages, addActivity, enabled, sendSms, sendEmailApi, reconcileSent]);
+
+  // Reply within a thread. Lead threads go through sendReply; phone-only threads
+  // (key "tel:<digits>") send straight to that number and thread by phone.
+  const sendThreadReply = useCallback((key: string, body: string) => {
+    if (!key.startsWith('tel:')) { sendReply(key, body); return; }
+    const number = key.slice(4);
+    const tempId = uid();
+    setMessages((prev) => [...prev, { id: tempId, leadId: undefined, who: 'You', salon: '', channel: 'text', direction: 'out', body, time: 'now', isRead: true, pending: true, phone: number }]);
+    (async () => { const r = await sendSms(number, body, undefined); reconcileSent(tempId, r); })();
+  }, [sendReply, sendSms, reconcileSent]);
 
   // Re-attempt a failed outbound message from the Inbox.
   const retrySend = useCallback((messageId: string) => {
@@ -366,7 +397,7 @@ export function useRelay() {
     });
     // Optimistically thread it into the Inbox, then reconcile on the provider reply.
     const tempId = uid();
-    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', subject, body, time: 'now', isRead: true, pending: true }]);
+    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', subject, body, time: 'now', isRead: true, pending: true, phone: lead?.phone }]);
     const lid = enabled ? leadId : undefined;
     (async () => {
       let r: { ok: boolean; messageId?: string; error?: string };
@@ -521,15 +552,13 @@ export function useRelay() {
 
   const sendKeypadText = useCallback((number: string, body: string) => {
     const lead = matchLeadByNumber(number);
-    // If the number belongs to a lead, thread it into the Inbox like any other send.
-    let tempId: string | null = null;
-    if (lead) {
-      tempId = uid();
-      setMessages((prev) => [...prev, { id: tempId!, leadId: lead.id, who: 'You', salon: lead.salon, channel: 'text', direction: 'out', body, time: 'now', isRead: true, pending: true }]);
-    }
+    // Always thread it into the Inbox — under the lead if the number matches one,
+    // otherwise as a phone-only thread so it's never invisible.
+    const tempId = uid();
+    setMessages((prev) => [...prev, { id: tempId, leadId: lead?.id, who: 'You', salon: lead?.salon || '', channel: 'text', direction: 'out', body, time: 'now', isRead: true, pending: true, phone: number }]);
     (async () => {
       const r = await sendSms(number, body, enabled ? lead?.id : undefined);
-      if (tempId) reconcileSent(tempId, r);
+      reconcileSent(tempId, r);
     })();
     logDial('text', number, body);
   }, [matchLeadByNumber, logDial, enabled, sendSms, reconcileSent]);
@@ -555,7 +584,7 @@ export function useRelay() {
     me, reps, signOut,
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip,
     addActivity, setStage,
-    messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, retrySend,
+    messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, sendThreadReply, retrySend, threadKeyForMessage,
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,

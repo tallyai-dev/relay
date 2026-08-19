@@ -294,51 +294,66 @@ function Placeholder({ view }: { view: string }) {
 }
 
 // ── Inbox ─────────────────────────────────────────────────────────────────────
+function fmtPhone(p?: string): string {
+  const d = (p || '').replace(/\D/g, '');
+  const t = d.length === 11 && d[0] === '1' ? d.slice(1) : d;
+  if (t.length === 10) return `(${t.slice(0, 3)}) ${t.slice(3, 6)}-${t.slice(6)}`;
+  return p || '—';
+}
+
 function Inbox({ r }: { r: R }) {
   const [reply, setReply] = useState('');
-  const byLead = new Map<string, typeof r.messages>();
-  r.messages.forEach((m) => { if (!m.leadId) return; const a = byLead.get(m.leadId) || []; a.push(m); byLead.set(m.leadId, a); });
-  const threads = [...byLead.entries()].map(([leadId, msgs]) => ({
-    leadId, msgs, last: msgs[msgs.length - 1], unread: msgs.some((x) => x.direction === 'in' && !x.isRead),
-  }));
+  // Group every message by its thread key (lead id, or "tel:<digits>" when there's
+  // no lead) so texts to/from unknown numbers still show up.
+  const byKey = new Map<string, typeof r.messages>();
+  r.messages.forEach((m) => { const k = r.threadKeyForMessage(m); if (!k) return; const a = byKey.get(k) || []; a.push(m); byKey.set(k, a); });
+  const threadList = [...byKey.entries()].map(([key, msgs]) => {
+    const isPhone = key.startsWith('tel:');
+    const lead = isPhone ? undefined : r.leadById(key);
+    const number = isPhone ? key.slice(4) : lead?.phone;
+    const name = lead ? (lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name : lead.salon) : fmtPhone(number);
+    return { key, msgs, last: msgs[msgs.length - 1], unread: msgs.some((x) => x.direction === 'in' && !x.isRead), isPhone, lead, number, name };
+  });
   const sel = r.activeThreadLead;
-  const selMsgs = sel ? byLead.get(sel) || [] : [];
-  const selLead = sel ? r.leadById(sel) : undefined;
+  const selT = threadList.find((t) => t.key === sel);
+  const selMsgs = selT ? selT.msgs : [];
 
   return (
     <section className="view on" style={{ padding: 0 }}>
       <div className={`inbox ${sel ? 'has-sel' : ''}`}>
         <div className="inbox-list">
           <div className="inbox-lh"><h2>Inbox</h2><button className="btn sm" onClick={r.simInbound}>☎ Simulate returning call</button></div>
-          {threads.map(({ leadId, last, unread }, i) => {
-            const l = r.leadById(leadId); const who = l?.contact?.name && l.contact.name !== '—' ? l.contact.name : l?.salon;
-            return (
-              <div key={leadId} className={`thread ${unread ? 'unread' : ''} ${sel === leadId ? 'on' : ''}`} onClick={() => r.openThread(leadId)}>
-                <div className="tav" style={{ background: colorFor(i) }}>{initials(who || '?')}
-                  <span className="chn">{last.channel === 'email' ? Icon.email : Icon.text}</span></div>
-                <div className="tbody">
-                  <div className="trow"><span className="tnm">{who}</span><span className="ttime">{last.time}</span></div>
-                  <div className="tsalon">{l?.salon}</div>
-                  <div className="tprev">{last.body}</div>
-                </div>
-                {unread && <span className="udot" />}
+          {threadList.length === 0 && <div className="inbox-empty" style={{ padding: '30px 16px', textAlign: 'left' }}>No conversations yet. Texts you send or receive will thread here.</div>}
+          {threadList.map((t, i) => (
+            <div key={t.key} className={`thread ${t.unread ? 'unread' : ''} ${sel === t.key ? 'on' : ''}`} onClick={() => r.openThread(t.key)}>
+              <div className="tav" style={{ background: colorFor(i) }}>{initials(t.name || '?')}
+                <span className="chn">{t.last.channel === 'email' ? Icon.email : Icon.text}</span></div>
+              <div className="tbody">
+                <div className="trow"><span className="tnm">{t.name}</span><span className="ttime">{t.last.time}</span></div>
+                <div className="tsalon">{t.lead ? t.lead.salon : 'Not in your leads'}</div>
+                <div className="tprev">{t.last.body}</div>
               </div>
-            );
-          })}
+              {t.unread && <span className="udot" />}
+            </div>
+          ))}
         </div>
         <div className="inbox-conv">
-          {!sel ? <div className="inbox-empty">Select a conversation</div> : (
+          {!selT ? <div className="inbox-empty">Select a conversation</div> : (
             <>
               <div className="conv-head">
                 <button className="inbox-back" onClick={r.closeThread} title="Back to inbox">‹</button>
-                <div className="cav" style={{ background: colorFor(threads.findIndex((t) => t.leadId === sel)) }}>{initials(selLead?.contact?.name && selLead.contact.name !== '—' ? selLead.contact.name : selLead?.salon || '?')}</div>
-                <div><h3>{selLead?.contact?.name !== '—' ? selLead?.contact?.name : selLead?.salon} · {selLead?.salon}</h3><div className="cs">{selMsgs[selMsgs.length - 1]?.channel === 'email' ? 'Email' : 'Text'} · {selLead?.phone}</div></div>
-                <div className="ca"><button className="btn sm" onClick={() => { r.setActiveLeadId(sel); r.setView('dialer'); }}>Open in dialer</button></div>
+                <div className="cav" style={{ background: colorFor(threadList.findIndex((t) => t.key === sel)) }}>{initials(selT.name || '?')}</div>
+                <div><h3>{selT.name}{selT.lead ? ` · ${selT.lead.salon}` : ''}</h3><div className="cs">{selMsgs[selMsgs.length - 1]?.channel === 'email' ? 'Email' : 'Text'} · {fmtPhone(selT.number)}</div></div>
+                <div className="ca">
+                  {selT.lead
+                    ? <button className="btn sm" onClick={() => { r.setActiveLeadId(selT.lead!.id); r.setView('dialer'); }}>Open in dialer</button>
+                    : <button className="btn sm" onClick={() => r.saveNumberAsLead(selT.number || '', '')}>+ Save as lead</button>}
+                </div>
               </div>
               <div className="conv-msgs">
                 {selMsgs.map((m) => (
                   <div key={m.id} className={`cmsg ${m.direction === 'out' ? 'me' : 'them'}`}>
-                    <div className="meta">{m.direction === 'out' ? 'You' : selLead?.contact?.name || 'Them'} · {m.channel} · {m.time}
+                    <div className="meta">{m.direction === 'out' ? 'You' : selT.lead?.contact?.name && selT.lead.contact.name !== '—' ? selT.lead.contact.name : fmtPhone(selT.number)} · {m.channel} · {m.time}
                       {m.pending && <span className="msg-status pending"> · sending…</span>}
                       {m.failed && <span className="msg-status failed"> · not delivered</span>}</div>
                     <div className={`bub${m.failed ? ' failed' : ''}`}>{m.subject && <div className="subj">{m.subject}</div>}{m.body}</div>
@@ -348,8 +363,8 @@ function Inbox({ r }: { r: R }) {
               </div>
               <div className="conv-reply">
                 <textarea value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Reply…"
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (reply.trim()) { r.sendReply(sel, reply.trim()); setReply(''); } } }} />
-                <button className="btn primary send" onClick={() => { if (reply.trim()) { r.sendReply(sel, reply.trim()); setReply(''); } }}>Send</button>
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (reply.trim()) { r.sendThreadReply(sel!, reply.trim()); setReply(''); } } }} />
+                <button className="btn primary send" onClick={() => { if (reply.trim()) { r.sendThreadReply(sel!, reply.trim()); setReply(''); } }}>Send</button>
               </div>
             </>
           )}

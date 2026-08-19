@@ -157,6 +157,7 @@ export async function fetchMessages(): Promise<Message[]> {
     body: r.body || '',
     time: new Date(r.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
     isRead: r.is_read,
+    phone: (r.direction === 'in' ? r.from_addr : r.to_addr) || undefined,
   }));
 }
 
@@ -165,6 +166,7 @@ export function rowToMessage(r: any): Message {
     id: r.id, leadId: r.lead_id || undefined, who: r.from_addr || '—', salon: '',
     channel: r.channel, direction: r.direction, subject: r.subject || undefined,
     body: r.body || '', time: 'just now', isRead: r.is_read,
+    phone: (r.direction === 'in' ? r.from_addr : r.to_addr) || undefined,
   };
 }
 
@@ -172,6 +174,13 @@ export async function markThreadRead(leadId: string): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
   await sb.from('messages').update({ is_read: true }).eq('lead_id', leadId);
+}
+
+// Mark specific messages read by id (works for lead threads and phone-only threads).
+export async function markMessagesRead(ids: string[]): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb || !ids.length) return;
+  await sb.from('messages').update({ is_read: true }).in('id', ids);
 }
 
 // Subscribe to inbound messages in realtime. Returns an unsubscribe fn.
