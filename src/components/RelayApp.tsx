@@ -35,12 +35,9 @@ export default function RelayApp() {
           {r.view === 'staging' && <StagingView r={r} onImport={() => setImportOpen(true)} />}
           {r.view === 'enrich' && <EnrichView r={r} />}
           {r.view === 'dialer' && <Dialer r={r} />}
-          {r.view === 'keypad' && <Keypad r={r} />}
           {r.view === 'inbox' && <Inbox r={r} />}
           {r.view === 'cadences' && <CadenceBuilder r={r} />}
-          {(r.view === 'reports' || r.view === 'mobile') && (
-            <Placeholder view={r.view} />
-          )}
+          {r.view === 'reports' && <Placeholder view={r.view} />}
         </div>
       </div>
       {importOpen && <ImportModal r={r} onClose={() => setImportOpen(false)} />}
@@ -197,18 +194,16 @@ function Rail({ r }: { r: R }) {
   return (
     <nav className="rail">
       <div className="logo">R</div>
-      {btn('leads', 'Leads', <path d="M3 6h18M3 12h18M3 18h18" />)}
+      {btn('leads', 'Pipeline', <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />)}
       {btn('staging', 'Staging', <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />)}
       {btn('enrich', 'Enrich', <path d="M13 3l2.3 6.2L22 11.5l-6.7 2.3L13 20l-2.3-6.2L4 11.5l6.7-2.3zM5 3v3M3.5 4.5h3" />)}
       {btn('dialer', 'Workspace', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />)}
-      {btn('keypad', 'Keypad', <><circle cx="7" cy="6" r="1.3" /><circle cx="12" cy="6" r="1.3" /><circle cx="17" cy="6" r="1.3" /><circle cx="7" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="17" cy="12" r="1.3" /><circle cx="7" cy="18" r="1.3" /><circle cx="12" cy="18" r="1.3" /><circle cx="17" cy="18" r="1.3" /></>)}
       <button className={r.view === 'inbox' ? 'on' : ''} title="Inbox" onClick={() => r.setView('inbox')} style={{ position: 'relative' }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16v16H4z" /><path d="M4 9h5l2 3h2l2-3h5" /></svg>
         {r.unreadCount > 0 && <span className="badge">{r.unreadCount}</span>}
       </button>
       {btn('cadences', 'Cadences', <path d="M3 12h4l3 8 4-16 3 8h4" />)}
       {btn('reports', 'Reports', <path d="M3 3v18h18M8 15v3M13 9v9M18 5v13" />)}
-      {btn('mobile', 'Mobile', <><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></>)}
       <div className="spacer" />
       <div className="me" title={r.me?.name || 'You'}>{r.me ? initials(r.me.name) : 'SB'}</div>
     </nav>
@@ -1319,8 +1314,8 @@ function FloatingDialer({ r }: { r: R }) {
     return () => clearInterval(t);
   }, [mode]);
 
-  // Hide on the full Keypad view (redundant) and while a call panel is up.
-  if (r.view === 'keypad' || r.activeCall) return null;
+  // Hide while a call panel is up.
+  if (r.activeCall) return null;
 
   const press = (d: string) => setNum((n) => (n + d).slice(0, 18));
   const back = () => setNum((n) => n.slice(0, -1));
