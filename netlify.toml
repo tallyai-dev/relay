@@ -1,0 +1,15 @@
+# Netlify deploy config for Relay (Next.js).
+# The official @netlify/plugin-nextjs handles Next App Router route handlers
+# (our /api/* Twilio + webhook endpoints) as serverless functions automatically.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Twilio/webhook endpoints are POST-only from external services.
+# Make sure these env vars are set in Netlify → Site settings → Environment:
+#   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
+#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET,
+#   TWILIO_TWIML_APP_SID, TWILIO_CALLER_ID, FORWARD_TO_NUMBER, PUBLIC_BASE_URL
