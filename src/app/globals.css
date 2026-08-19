@@ -866,6 +866,12 @@
 }
 
 /* ── Smart import preview ─────────────────────────────────────────────────── */
+.imp-drop{display:flex;flex-direction:column;align-items:center;gap:8px;padding:20px;border:1.5px dashed var(--line);border-radius:10px;background:var(--panel2,#f7f8fa);color:var(--ink3);cursor:pointer;text-align:center;transition:border-color .15s,background .15s}
+.imp-drop:hover{border-color:var(--accent,#2563eb);color:var(--ink2)}
+.imp-drop.on{border-color:var(--accent,#2563eb);background:#eef4ff;color:var(--ink2)}
+.imp-drop svg{width:26px;height:26px;opacity:.7}
+.imp-drop b{color:var(--ink2);font-weight:600}
+.imp-or{text-align:center;font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em;margin:12px 0 8px}
 .imp-detected{font-size:11.5px;color:var(--ink3);margin-top:10px;line-height:1.6}
 .imp-detected b{color:var(--ink2);font-weight:600}
 .imp-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}

@@ -61,7 +61,17 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
   const [done, setDone] = useState<number | null>(null);
   const [owner, setOwner] = useState<string>(r.me?.id || '');
   const [showAll, setShowAll] = useState(false);
+  const [drag, setDrag] = useState(false);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const isAdmin = r.me?.role === 'admin';
+
+  const loadFile = (file: File) => {
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => { setCsv(String(reader.result || '')); setShowAll(false); };
+    reader.readAsText(file);
+  };
 
   // Existing book — for duplicate detection.
   const existing = useMemo(() => {
@@ -93,8 +103,21 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
         <div className="mb import-body">
           {done === null ? (
             <>
-              <div className="import-hint">Paste a CSV (or export from anywhere). Columns are auto‑detected — phone numbers get cleaned up, bad emails dropped, and duplicates flagged before anything is imported.</div>
-              <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setShowAll(false); }} placeholder="Paste rows here…" />
+              <div className="import-hint">Upload a CSV file, or paste rows below. Columns are auto‑detected — phone numbers get cleaned up, bad emails dropped, and duplicates flagged before anything is imported.</div>
+              <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) loadFile(f); e.target.value = ''; }} />
+              <div
+                className={`imp-drop${drag ? ' on' : ''}`}
+                onClick={() => fileRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+                onDragLeave={() => setDrag(false)}
+                onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) loadFile(f); }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" /></svg>
+                <div>{fileName ? <b>{fileName}</b> : <><b>Choose a CSV file</b> or drag it here</>}</div>
+              </div>
+              <div className="imp-or">or paste rows</div>
+              <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setShowAll(false); setFileName(null); }} placeholder="Paste rows here…" />
 
               {analysis && s && s.total > 0 && (
                 <>
