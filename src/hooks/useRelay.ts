@@ -240,6 +240,7 @@ export function useRelay() {
     setMessages((prev) => prev.map((m) => (m.leadId === leadId ? { ...m, isRead: true } : m)));
     if (enabled) markThreadRead(leadId);
   }, [enabled]);
+  const closeThread = useCallback(() => setActiveThreadLead(null), []);
 
   const sendReply = useCallback((leadId: string, body: string) => {
     const lead = leadsRef.current.find((l) => l.id === leadId);
@@ -452,7 +453,7 @@ export function useRelay() {
     me, reps, signOut,
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip,
     addActivity, setStage,
-    messages, activeThreadLead, unreadCount, openThread, sendReply,
+    messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply,
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,

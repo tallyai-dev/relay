@@ -207,7 +207,7 @@ function Inbox({ r }: { r: R }) {
 
   return (
     <section className="view on" style={{ padding: 0 }}>
-      <div className="inbox">
+      <div className={`inbox ${sel ? 'has-sel' : ''}`}>
         <div className="inbox-list">
           <div className="inbox-lh"><h2>Inbox</h2><button className="btn sm" onClick={r.simInbound}>☎ Simulate returning call</button></div>
           {threads.map(({ leadId, last, unread }, i) => {
@@ -230,6 +230,7 @@ function Inbox({ r }: { r: R }) {
           {!sel ? <div className="inbox-empty">Select a conversation</div> : (
             <>
               <div className="conv-head">
+                <button className="inbox-back" onClick={r.closeThread} title="Back to inbox">‹</button>
                 <div className="cav" style={{ background: colorFor(threads.findIndex((t) => t.leadId === sel)) }}>{initials(selLead?.contact?.name && selLead.contact.name !== '—' ? selLead.contact.name : selLead?.salon || '?')}</div>
                 <div><h3>{selLead?.contact?.name !== '—' ? selLead?.contact?.name : selLead?.salon} · {selLead?.salon}</h3><div className="cs">{selMsgs[selMsgs.length - 1]?.channel === 'email' ? 'Email' : 'Text'} · {selLead?.phone}</div></div>
                 <div className="ca"><button className="btn sm" onClick={() => { r.setActiveLeadId(sel); r.setView('dialer'); }}>Open in dialer</button></div>
