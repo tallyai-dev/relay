@@ -846,7 +846,14 @@ function Dialer({ r }: { r: R }) {
             <div className="r"><QuickEmail lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
-          {inFlow ? <FlowBar r={r} lead={lead} /> : (
+          {inFlow ? (
+            // The action bar always belongs to the flow's CURRENT lead. If the rep
+            // has browsed to a different lead in the queue, show a peek banner
+            // instead of a compose — never a send box under the wrong salon.
+            r.current && r.activeLeadId === r.current.leadId
+              ? <FlowBar r={r} lead={r.currentLead || lead} />
+              : <FlowPeekBar r={r} viewing={lead} />
+          ) : (
             <div className="task-strip"><div className="cb" /><div className="t">Call — {lead.objection}</div>
               <div className="chip amber">Due today</div>
               <div className="o"><button className="btn sm primary" onClick={() => r.startFlow()}>Start Flow</button></div></div>
@@ -937,6 +944,23 @@ function ScriptPanel({ lead }: { lead: Lead }) {
 }
 
 // ── Flow action bar ───────────────────────────────────────────────────────────
+// Shown when the rep has clicked a different lead in the queue while a flow is
+// running. The flow's action stays on its current lead — this makes that
+// explicit and offers a one-click way back, instead of a compose box that looks
+// like it's addressed to the lead you're only peeking at.
+function FlowPeekBar({ r, viewing }: { r: R; viewing: Lead }) {
+  const cur = r.currentLead;
+  return (
+    <div className="flowbar peek">
+      <span className="fb-badge">👀 Viewing {viewing.salon}</span>
+      <span className="fb-what">Your flow is on <b>{cur?.salon || 'the current lead'}</b> — actions here won&apos;t fire until you&apos;re back on it.</span>
+      <div className="fb-actions">
+        <button className="btn primary sm" onClick={() => cur && r.setActiveLeadId(cur.id)}>Return to flow →</button>
+      </div>
+    </div>
+  );
+}
+
 function FlowBar({ r, lead }: { r: R; lead: Lead }) {
   const ch = r.currentChannel;
   const { phase } = r.flow;
@@ -981,8 +1005,10 @@ function FlowBar({ r, lead }: { r: R; lead: Lead }) {
           <button className="btn sm" onClick={r.flowSkip}>Skip</button></div></div>
     );
   }
-  if (ch === 'text') return <ComposeText r={r} lead={lead} />;
-  return <ComposeEmail r={r} lead={lead} />;
+  // key by lead id so the draft always re-derives for the lead it's addressed to
+  // (a stale body must never survive a lead change).
+  if (ch === 'text') return <ComposeText key={lead.id} r={r} lead={lead} />;
+  return <ComposeEmail key={lead.id} r={r} lead={lead} />;
 }
 
 function ComposeText({ r, lead }: { r: R; lead: Lead }) {

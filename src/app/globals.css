@@ -462,6 +462,8 @@
   .flowbar.email{background:linear-gradient(90deg,var(--blue-soft),#fff);border-color:#cfe0f0}
   .flowbar.dispo,.flowbar.connected{background:#0f1b2e;border-color:#0f1b2e;color:#e6eef9}
   .flowbar.cleared{background:var(--accent-soft);border-color:#bfe3d8}
+  .flowbar.peek{background:linear-gradient(90deg,#fff6e6,#fff);border-color:#f0dfb6}
+  .flowbar.peek .fb-badge{background:#b4791f;color:#fff}
   .fb-badge{font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:5px 11px;border-radius:20px;
     background:#111c2e;color:#5ea8ff;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex-shrink:0}
   .flowbar.text .fb-badge{background:var(--purple);color:#fff}
