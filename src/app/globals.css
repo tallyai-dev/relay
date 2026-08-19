@@ -701,6 +701,7 @@
 .found .tick{margin-left:auto;font-size:10px;font-weight:800;color:var(--green,#16a34a);background:var(--green-soft,#e6f6ec);padding:3px 8px;border-radius:20px;white-space:nowrap}
 .enr-acc{margin-top:12px}
 .enr-done{font-size:13px;font-weight:700;color:var(--green,#16a34a)}
+.book-chip{display:inline-block;font-size:12px;font-weight:700;background:var(--soft,#eef4ff);color:var(--accent-ink,#1d4ed8);padding:3px 10px;border-radius:20px}
 .keynote{font-size:11px;color:var(--amber,#b7791f);background:var(--amber-soft,#fdf0d5);border-radius:8px;padding:8px 10px;margin-top:14px;line-height:1.5}
 .msg-status{font-weight:600}
 .msg-status.pending{color:var(--ink3,#94a3b8)}

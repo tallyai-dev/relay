@@ -299,7 +299,7 @@ export async function deployStagedLeads(count: number, cadenceId: string, ownerR
 // filled-in phone onto the primary contact so the dialer/keypad can match it.
 export async function updateLeadEnrichment(
   leadId: string,
-  fields: { phone?: string; city?: string; website?: string }
+  fields: { phone?: string; city?: string; website?: string; bookingSystem?: string }
 ): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
@@ -307,6 +307,7 @@ export async function updateLeadEnrichment(
   if (fields.phone) patch.phone = toE164(fields.phone) ?? fields.phone;
   if (fields.city) patch.city = fields.city;
   if (fields.website) patch.website = fields.website;
+  if (fields.bookingSystem) patch.booking_system = fields.bookingSystem;
   if (!Object.keys(patch).length) return;
   const { error } = await sb.from('leads').update(patch).eq('id', leadId);
   if (error) { console.error('updateLeadEnrichment', error); return; }

@@ -8,7 +8,7 @@ import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
 export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile';
-export interface EnrichResult { found: boolean; name?: string; phone?: string; website?: string; city?: string; address?: string; hours?: string[]; error?: string }
+export interface EnrichResult { found: boolean; name?: string; phone?: string; website?: string; bookingSystem?: string; city?: string; address?: string; hours?: string[]; error?: string }
 
 const DEFAULT_CADENCE_ID = '11111111-1111-1111-1111-111111111111';
 const SEED_CADENCES: Cadence[] = [
@@ -534,7 +534,8 @@ export function useRelay() {
   }, [enabled, me]);
 
   // ── Enrichment (Google Places) ───────────────────────────────────────────────
-  const enrichableLeads = leads.filter((l) => !l.phone || !l.website);
+  const enrichableLeads = leads.filter((l) => !l.phone || !l.website || !l.bookingSystem);
+  const DEMO_BOOKING = ['Vagaro', 'Square Appointments', 'Boulevard', 'Booksy', 'GlossGenius', 'Fresha'];
   // Look a lead up on Google Places; returns what was found (does not save).
   const enrichLead = useCallback(async (leadId: string): Promise<EnrichResult> => {
     const lead = leadsRef.current.find((l) => l.id === leadId);
@@ -542,7 +543,8 @@ export function useRelay() {
     if (!enabled) {
       // Demo mode: fabricate a plausible result so the flow is demonstrable.
       const slug = lead.salon.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return { found: true, name: lead.salon, phone: lead.phone || '(303) 555-0148', website: lead.website || `${slug}.com`, city: lead.city || 'Denver, CO', address: `${lead.city || 'Denver, CO'}`, hours: ['Mon–Fri 9 AM–6 PM', 'Sat 9 AM–4 PM', 'Sun closed'] };
+      const bk = DEMO_BOOKING[slug.length % DEMO_BOOKING.length];
+      return { found: true, name: lead.salon, phone: lead.phone || '(303) 555-0148', website: lead.website || `${slug}.com`, bookingSystem: lead.bookingSystem || bk, city: lead.city || 'Denver, CO', address: `${lead.city || 'Denver, CO'}`, hours: ['Mon–Fri 9 AM–6 PM', 'Sat 9 AM–4 PM', 'Sun closed'] };
     }
     try {
       const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ salon: lead.salon, city: lead.city }) });
@@ -550,11 +552,12 @@ export function useRelay() {
     } catch { return { found: false, error: 'Lookup failed.' }; }
   }, [enabled]);
   // Apply accepted enrichment fields to a lead.
-  const saveEnrichment = useCallback((leadId: string, fields: { phone?: string; city?: string; website?: string }) => {
+  const saveEnrichment = useCallback((leadId: string, fields: { phone?: string; city?: string; website?: string; bookingSystem?: string }) => {
     setLeads((prev) => prev.map((l) => (l.id === leadId ? {
       ...l,
       phone: fields.phone ?? l.phone,
       website: fields.website ?? l.website,
+      bookingSystem: fields.bookingSystem ?? l.bookingSystem,
       city: fields.city ?? l.city,
       contact: l.contact ? { ...l.contact, phone: fields.phone ?? l.contact.phone } : l.contact,
     } : l)));

@@ -402,9 +402,10 @@ function EnrichView({ r }: { r: R }) {
 
   // Only offer fields that are actually missing / new on the lead.
   const newFields = (lead: Lead | undefined, res: EnrichResult) => {
-    const f: { phone?: string; city?: string; website?: string } = {};
+    const f: { phone?: string; city?: string; website?: string; bookingSystem?: string } = {};
     if (res.phone && !lead?.phone) f.phone = res.phone;
     if (res.website && !lead?.website) f.website = res.website;
+    if (res.bookingSystem && !lead?.bookingSystem) f.bookingSystem = res.bookingSystem;
     if (res.city && !lead?.city) f.city = res.city;
     return f;
   };
@@ -435,13 +436,14 @@ function EnrichView({ r }: { r: R }) {
     <span className="miss">
       {!l.phone && <span className="mchip">No phone</span>}
       {!l.website && <span className="mchip">No website</span>}
+      {!l.bookingSystem && <span className="mchip">No booking</span>}
     </span>
   );
 
   return (
     <section className="view on">
       <div className="page-head">
-        <div><h1>Enrich leads</h1><p>{leads.length} lead{leads.length === 1 ? '' : 's'} missing phone or website · filled from Google Places</p></div>
+        <div><h1>Enrich leads</h1><p>{leads.length} lead{leads.length === 1 ? '' : 's'} missing phone, website, or booking platform · filled from Google Places</p></div>
         {leads.length > 0 && <button className="btn primary" onClick={enrichAll}>✨ Enrich all {leads.length}</button>}
       </div>
       {bulk && <div className="deploy-flash">{bulk}</div>}
@@ -472,6 +474,7 @@ function EnrichView({ r }: { r: R }) {
                   <>
                     {selRes.phone && <div className="found"><span className="k">Phone</span><span className="v">{selRes.phone}</span>{selLead.phone ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
                     {selRes.website && <div className="found"><span className="k">Website</span><span className="v">{selRes.website}</span>{selLead.website ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
+                    {selRes.bookingSystem && <div className="found"><span className="k">Booking</span><span className="v"><span className="book-chip">{selRes.bookingSystem}</span></span>{selLead.bookingSystem ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
                     {selRes.city && <div className="found"><span className="k">City</span><span className="v">{selRes.city}</span>{selLead.city ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
                     {selRes.hours && <div className="found"><span className="k">Hours</span><span className="v" style={{ fontWeight: 400, fontSize: 12 }}>{selRes.hours[0]}{selRes.hours.length > 1 ? ` · +${selRes.hours.length - 1} more` : ''}</span></div>}
                     {selRes.address && <div className="found"><span className="k">Address</span><span className="v" style={{ fontWeight: 400, fontSize: 12 }}>{selRes.address}</span></div>}
