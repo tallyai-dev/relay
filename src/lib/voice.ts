@@ -34,13 +34,17 @@ async function ensureDevice(identity = 'rep'): Promise<Device | null> {
   }
 }
 
-/** Place a real outbound call. Returns the Call, or null if not configured. */
-export async function placeCall(toDisplay: string): Promise<Call | null> {
+/** Place a real outbound call. Returns the Call, or null if not configured.
+ * leadId (when known) rides along so the server can attach the recording +
+ * AI summary to the right lead's timeline. */
+export async function placeCall(toDisplay: string, leadId?: string): Promise<Call | null> {
   const to = normalizePhone(toDisplay);
   if (!to) return null;
   const d = await ensureDevice();
   if (!d) return null;
-  return d.connect({ params: { To: to } });
+  const params: Record<string, string> = { To: to };
+  if (leadId) params.leadId = leadId;
+  return d.connect({ params });
 }
 
 /** Register a handler for inbound calls (Answer/Decline UI hooks into this). */

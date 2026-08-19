@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRelay, type EnrichResult } from '@/hooks/useRelay';
-import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage } from '@/lib/types';
+import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
 import { placeCall, normalizePhone } from '@/lib/voice';
 import { analyzeImport } from '@/lib/csv';
@@ -871,16 +871,7 @@ function Dialer({ r }: { r: R }) {
             <div className="bh"><div className="bt">Activity · {acts.length}</div></div>
             <div className="timeline">
               {acts.length === 0 && <div className="muted">No activity yet — first touch.</div>}
-              {acts.map((h) => (
-                <div key={h.id} className={`tl ${h.kind}`}>
-                  <div className="dot" />
-                  <div className="tlh"><span className="ty">{h.ty}</span>{h.ai && <span className="ai-note">✦ AI summary</span>}<span className="tm">{h.time}</span></div>
-                  <div className={`body ${h.kind === 'call' || h.kind === 'book' ? 'card' : ''}`}>
-                    {h.aiNote || h.body}
-                    {h.ownNote && <div className="own-note">📝 {h.ownNote}</div>}
-                  </div>
-                </div>
-              ))}
+              {acts.map((h) => <TimelineItem key={h.id} h={h} />)}
             </div>
           </div>
         </div>
@@ -892,6 +883,38 @@ function Dialer({ r }: { r: R }) {
         {r.activeCall && <CallPanel r={r} lead={lead} direction={r.activeCall.direction} incomingCall={r.activeCall.incomingCall} />}
       </div>
     </section>
+  );
+}
+
+// One entry in the lead's activity timeline. Calls with a recording get an
+// inline audio player + expandable transcript; the AI summary shows as before.
+const fmtDur = (s?: number) => { if (s == null) return ''; const m = Math.floor(s / 60); return `${m}:${String(s % 60).padStart(2, '0')}`; };
+const recSid = (url?: string) => url?.match(/Recordings\/(RE[0-9a-fA-F]+)/)?.[1];
+
+function TimelineItem({ h }: { h: Activity }) {
+  const [showTx, setShowTx] = useState(false);
+  const sid = recSid(h.recordingUrl);
+  return (
+    <div className={`tl ${h.kind}`}>
+      <div className="dot" />
+      <div className="tlh">
+        <span className="ty">{h.ty}</span>
+        {h.ai && <span className="ai-note">✦ AI summary</span>}
+        {h.recordingUrl && <span className="rec-chip">● Recorded{h.durationS != null ? ` · ${fmtDur(h.durationS)}` : ''}</span>}
+        <span className="tm">{h.time}</span>
+      </div>
+      <div className={`body ${h.kind === 'call' || h.kind === 'book' ? 'card' : ''}`} style={{ whiteSpace: 'pre-line' }}>
+        {h.aiNote || h.body}
+        {h.ownNote && <div className="own-note">📝 {h.ownNote}</div>}
+        {sid && (
+          <div className="rec-player">
+            <audio controls preload="none" src={`/api/voice/media?sid=${sid}`} />
+            {h.transcript && <button className="rec-tx-toggle" onClick={() => setShowTx((v) => !v)}>{showTx ? 'Hide transcript' : 'Show transcript'}</button>}
+          </div>
+        )}
+        {sid && showTx && h.transcript && <div className="rec-transcript">{h.transcript}</div>}
+      </div>
+    </div>
   );
 }
 
@@ -1059,7 +1082,7 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
         } else { runSim(inScript); }
         return;
       }
-      const call = await placeCall(lead.phone || '');
+      const call = await placeCall(lead.phone || '', lead.id);
       if (cancelled) { call?.disconnect?.(); return; }
       if (call) {
         callRef.current = call;

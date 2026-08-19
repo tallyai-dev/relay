@@ -88,7 +88,11 @@ export async function fetchActivities(leadId: string): Promise<Activity[]> {
     .select('*')
     .eq('lead_id', leadId)
     .order('created_at', { ascending: false });
-  return (data || []).map((r: any): Activity => ({
+  return (data || []).map(rowToActivity);
+}
+
+function rowToActivity(r: any): Activity {
+  return {
     id: r.id,
     leadId: r.lead_id,
     kind: r.kind,
@@ -100,7 +104,23 @@ export async function fetchActivities(leadId: string): Promise<Activity[]> {
     aiNote: r.ai_note || undefined,
     ownNote: r.own_note || undefined,
     body: r.body || undefined,
-  }));
+    recordingUrl: r.recording_url || undefined,
+    transcript: r.transcript || undefined,
+    durationS: r.duration_s ?? undefined,
+  };
+}
+
+// Subscribe to a lead's activity inserts + updates in realtime (so a call's
+// recording/AI summary lands live when the webhook finishes). Returns unsub.
+export function subscribeActivities(leadId: string, onChange: (a: Activity) => void): () => void {
+  const sb = supabaseBrowser();
+  if (!sb) return () => {};
+  const ch = sb
+    .channel(`activities-${leadId}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'activities', filter: `lead_id=eq.${leadId}` }, (p) => onChange(rowToActivity(p.new)))
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'activities', filter: `lead_id=eq.${leadId}` }, (p) => onChange(rowToActivity(p.new)))
+    .subscribe();
+  return () => { sb.removeChannel(ch); };
 }
 
 export async function insertActivity(

@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -121,6 +121,22 @@ export function useRelay() {
     fetchActivities(activeLeadId).then((rows) => {
       if (rows.length) setActivities((prev) => ({ ...prev, [activeLeadId]: rows }));
     });
+  }, [enabled, activeLeadId]);
+
+  // Live-merge activity inserts/updates for the active lead (a call's recording
+  // + AI summary arrives via webhook seconds after hangup — this makes it pop in
+  // without a refresh). Replace by id on UPDATE, prepend on INSERT.
+  useEffect(() => {
+    if (!enabled || !activeLeadId) return;
+    const unsub = subscribeActivities(activeLeadId, (a) => {
+      setActivities((prev) => {
+        const list = prev[activeLeadId] || [];
+        const i = list.findIndex((x) => x.id === a.id);
+        const next = i >= 0 ? list.map((x) => (x.id === a.id ? { ...x, ...a } : x)) : [a, ...list];
+        return { ...prev, [activeLeadId]: next };
+      });
+    });
+    return unsub;
   }, [enabled, activeLeadId]);
 
   const leadById = useCallback((id: string) => leads.find((l) => l.id === id), [leads]);

@@ -719,6 +719,17 @@
 .quickmail-item.blank{color:var(--ink3);font-weight:500;border-top:1px solid var(--line2);margin-top:4px;border-radius:0 0 7px 7px}
 .btn.sm:disabled{opacity:.45;cursor:not-allowed}
 
+/* Call recording + transcript in the activity timeline */
+.rec-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:#b4442f;
+  background:#fdece9;border:1px solid #f6cdc4;padding:1px 7px;border-radius:20px;margin-left:6px}
+.rec-player{display:flex;align-items:center;gap:10px;margin-top:9px;flex-wrap:wrap}
+.rec-player audio{height:34px;max-width:260px}
+.rec-tx-toggle{border:1px solid var(--line);background:#fff;color:var(--ink2);padding:5px 10px;border-radius:8px;
+  font-size:11px;font-weight:700;cursor:pointer;font-family:inherit}
+.rec-tx-toggle:hover{background:var(--accent-soft,#e6efff);color:var(--accent-ink,#1d4ed8);border-color:#cfe0ff}
+.rec-transcript{margin-top:8px;background:#f8faf9;border:1px solid var(--line2);border-radius:9px;padding:10px 12px;
+  font-size:12px;line-height:1.55;color:var(--ink2);max-height:220px;overflow:auto;white-space:pre-line}
+
 /* Pipeline filter bar */
 .lead-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 14px}
 .lf-search{flex:1;min-width:200px;max-width:320px;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;background:#fff;color:var(--ink);font-family:inherit}

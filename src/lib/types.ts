@@ -78,6 +78,9 @@ export interface Activity {
   aiNote?: string;
   ownNote?: string;
   body?: string;
+  recordingUrl?: string; // call recording (playable) when present
+  transcript?: string;   // full call transcript
+  durationS?: number;    // call length in seconds
 }
 
 export interface Message {
