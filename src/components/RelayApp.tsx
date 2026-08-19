@@ -709,6 +709,97 @@ function LeadEnrich({ r, lead }: { r: R; lead: Lead }) {
   );
 }
 
+// ── Compose a one-off email ───────────────────────────────────────────────────
+// Opens a pre-filled draft in the rep's OWN mail app (mailto:), so a requested
+// follow-up goes out from their real inbox, threads naturally, and lands in
+// their Sent folder. Nothing is sent from Relay — the rep reviews and hits send
+// themselves. Best deliverability, zero setup, right fit for warm/opt-in sends.
+const EMAIL_SIGNOFF = 'Seth\nTally AI';
+function firstName(lead: Lead): string {
+  const n = lead.contact?.name;
+  return n && n !== '—' ? n.split(' ')[0] : 'there';
+}
+type EmailTemplate = { key: string; label: string; subject: (l: Lead) => string; body: (l: Lead) => string };
+const EMAIL_TEMPLATES: EmailTemplate[] = [
+  {
+    key: 'info',
+    label: 'Info & pricing',
+    subject: (l) => `Tally AI for ${l.salon}`,
+    body: (l) => `Hi ${firstName(l)},
+
+Great chatting just now — here's the quick rundown on what we talked about.
+
+Tally sets up an AI receptionist for ${l.salon} that answers your missed and after-hours calls, books appointments straight into your calendar, and texts back anyone you can't get to — so you stop losing bookings when the front desk is slammed or closed.
+
+Happy to get you set up whenever you're ready — just reply here.
+
+Thanks,
+${EMAIL_SIGNOFF}`,
+  },
+  {
+    key: 'nice',
+    label: 'Nice talking to you',
+    subject: () => 'Following up',
+    body: (l) => `Hi ${firstName(l)},
+
+Really enjoyed talking with you today — wanted to get my info in your inbox so it's easy to find me.
+
+Whenever you want to get ${l.salon} set up with the AI receptionist, just reply here and I'll take care of the rest.
+
+Thanks,
+${EMAIL_SIGNOFF}`,
+  },
+  {
+    key: 'recap',
+    label: 'Recap of our call',
+    subject: () => 'Quick recap from our call',
+    body: (l) => `Hi ${firstName(l)},
+
+Quick recap of what we covered:
+
+- AI receptionist answers missed & after-hours calls for ${l.salon}
+- Books appointments and texts callers back automatically
+- Works with your current number — no new hardware
+
+I'll follow up soon, but reply anytime if you want to move forward.
+
+Thanks,
+${EMAIL_SIGNOFF}`,
+  },
+];
+
+function QuickEmail({ lead }: { lead: Lead }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const hasEmail = !!lead.email;
+  const send = (t: EmailTemplate) => {
+    const url = `mailto:${encodeURIComponent(lead.email!)}?subject=${encodeURIComponent(t.subject(lead))}&body=${encodeURIComponent(t.body(lead))}`;
+    const a = document.createElement('a'); a.href = url; a.click();
+    setOpen(false);
+  };
+  return (
+    <div className="quickmail" ref={ref}>
+      <button className="btn sm" disabled={!hasEmail} onClick={() => setOpen((v) => !v)}
+        title={hasEmail ? `Email ${lead.email} from your own inbox` : 'No email on file — enrich the lead first'}>✉ Email</button>
+      {open && hasEmail && (
+        <div className="quickmail-menu">
+          <div className="quickmail-hd">Opens a draft in your mail app — you review &amp; send. Goes to {lead.email}.</div>
+          {EMAIL_TEMPLATES.map((t) => (
+            <button key={t.key} className="quickmail-item" onClick={() => send(t)}>{t.label}</button>
+          ))}
+          <button className="quickmail-item blank" onClick={() => send({ key: 'blank', label: 'Blank', subject: () => '', body: () => '' })}>Blank email</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Dialer({ r }: { r: R }) {
   const lead = r.leadById(r.activeLeadId);
   if (!lead) return null;
@@ -752,7 +843,7 @@ function Dialer({ r }: { r: R }) {
           <div className="lead-head">
             <div className="avatar big" style={{ background: colorFor(idx) }}>{initials(lead.salon)}</div>
             <div><h2>{lead.salon}</h2><div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div></div>
-            <div className="r"><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><QuickEmail lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           {inFlow ? <FlowBar r={r} lead={lead} /> : (
