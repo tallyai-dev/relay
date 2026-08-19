@@ -12,6 +12,14 @@ export const SEED_LEADS: Lead[] = [
   { id: 'l6', salon: 'Golden Shears Co.', city: 'Meridian, ID', phone: '(208) 555-0165', stage: 'hot', cadenceId: 'c1', cadencePos: 4, objection: 'Price / contract', lastTouch: 'Demo done · 1d', contact: { id: 'ct6', name: 'Tom Alvarez', role: 'Owner', phone: '(208) 555-0165' } },
   { id: 'l7', salon: 'Velvet & Vine Salon', city: 'Bend, OR', phone: '(541) 555-0139', stage: 'new', cadenceId: 'c1', cadencePos: 0, objection: 'Gatekeeper', lastTouch: 'New · 5h', contact: { id: 'ct7', name: 'Erin D.', role: 'Owner', phone: '(541) 555-0139' } },
   { id: 'l8', salon: 'Ivy & Oak Studio', city: 'Ogden, UT', phone: '(801) 555-0155', stage: 'cold', cadenceId: 'c1', cadencePos: 2, objection: 'No answer', lastTouch: 'Called · 1d', contact: { id: 'ct8', name: '—', role: '—' } },
+  // Staged pool — imported, waiting to be deployed into a cadence.
+  { id: 's1', salon: 'Willow & Wren Salon', city: 'Denver, CO', phone: '(303) 555-0181', stage: 'new', cadenceId: 'c1', cadencePos: 0, deployed: false, objection: 'New', lastTouch: 'New', contact: { id: 'cs1', name: '—', role: 'Front desk' } },
+  { id: 's2', salon: 'Copperline Barbers', city: 'Denver, CO', phone: '(303) 555-0192', stage: 'new', cadenceId: 'c1', cadencePos: 0, deployed: false, objection: 'New', lastTouch: 'New', contact: { id: 'cs2', name: '—', role: 'Front desk' } },
+  { id: 's3', salon: 'Bloom Beauty Bar', city: 'Aurora, CO', phone: '(720) 555-0143', stage: 'new', cadenceId: 'c1', cadencePos: 0, deployed: false, objection: 'New', lastTouch: 'New', contact: { id: 'cs3', name: 'Marta L.', role: 'Owner' } },
+  { id: 's4', salon: 'The Cutting Room', city: 'Boulder, CO', phone: '(303) 555-0177', stage: 'new', cadenceId: 'c1', cadencePos: 0, deployed: false, objection: 'New', lastTouch: 'New', contact: { id: 'cs4', name: '—', role: 'Front desk' } },
+  { id: 's5', salon: 'Gilded Mane Studio', city: 'Fort Collins, CO', phone: '(970) 555-0166', stage: 'new', cadenceId: 'c1', cadencePos: 0, deployed: false, objection: 'New', lastTouch: 'New', contact: { id: 'cs5', name: 'Priya K.', role: 'Owner' } },
+  { id: 's6', salon: 'Sage & Shear', city: 'Littleton, CO', phone: '(303) 555-0159', stage: 'new', cadenceId: 'c1', cadencePos: 0, deployed: false, objection: 'New', lastTouch: 'New', contact: { id: 'cs6', name: '—', role: 'Front desk' } },
+  { id: 's7', salon: 'Honeycomb Hair Co.', city: 'Lakewood, CO', phone: '(720) 555-0128', stage: 'new', cadenceId: 'c1', cadencePos: 0, deployed: false, objection: 'New', lastTouch: 'New', contact: { id: 'cs7', name: '—', role: 'Front desk' } },
 ];
 
 export const SEED_ACTIVITIES: Record<string, Activity[]> = {

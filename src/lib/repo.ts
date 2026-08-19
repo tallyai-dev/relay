@@ -44,11 +44,13 @@ function rowToLead(row: any): Lead {
     city: row.city || '',
     phone: row.phone || '',
     email: row.email || undefined,
+    website: row.website || undefined,
     bookingSystem: row.booking_system || undefined,
     source: row.source || undefined,
     stage: row.stage as Stage,
     cadenceId: row.cadence_id || DEFAULT_CADENCE,
     cadencePos: row.cadence_pos ?? 0,
+    deployed: row.deployed ?? true,
     nextActionAt: row.next_action_at || undefined,
     contact: c
       ? { id: c.id, name: c.name || '—', role: c.role || '—', phone: c.phone, email: c.email }
@@ -276,6 +278,43 @@ export async function assignLeadCadence(leadId: string, cadenceId: string): Prom
   await sb.from('leads').update({ cadence_id: cadenceId, cadence_pos: 0 }).eq('id', leadId);
 }
 
+// Deploy the N oldest staged leads into a cadence: flip deployed=true, assign the
+// cadence, reset position, and make them due now. Returns the ids that moved.
+export async function deployStagedLeads(count: number, cadenceId: string, ownerRepId?: string): Promise<string[]> {
+  const sb = supabaseBrowser();
+  if (!sb || count <= 0) return [];
+  let q = sb.from('leads').select('id').eq('deployed', false).order('created_at', { ascending: true }).limit(count);
+  if (ownerRepId) q = q.or(`owner_rep_id.eq.${ownerRepId},owner_rep_id.is.null`);
+  const { data: picked, error: selErr } = await q;
+  if (selErr || !picked?.length) { if (selErr) console.error('deployStagedLeads select', selErr); return []; }
+  const ids = picked.map((r: any) => r.id);
+  const { error } = await sb.from('leads')
+    .update({ deployed: true, cadence_id: cadenceId, cadence_pos: 0, next_action_at: null })
+    .in('id', ids);
+  if (error) { console.error('deployStagedLeads update', error); return []; }
+  return ids;
+}
+
+// Save enrichment results onto a lead (only the fields provided). Also mirrors a
+// filled-in phone onto the primary contact so the dialer/keypad can match it.
+export async function updateLeadEnrichment(
+  leadId: string,
+  fields: { phone?: string; city?: string; website?: string }
+): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  const patch: any = {};
+  if (fields.phone) patch.phone = toE164(fields.phone) ?? fields.phone;
+  if (fields.city) patch.city = fields.city;
+  if (fields.website) patch.website = fields.website;
+  if (!Object.keys(patch).length) return;
+  const { error } = await sb.from('leads').update(patch).eq('id', leadId);
+  if (error) { console.error('updateLeadEnrichment', error); return; }
+  if (patch.phone) {
+    await sb.from('contacts').update({ phone: patch.phone }).eq('lead_id', leadId).eq('is_primary', true);
+  }
+}
+
 // Snooze a lead: set its next-due timestamp N days out (null clears / makes due now).
 export async function setLeadNextAction(leadId: string, iso: string | null): Promise<void> {
   const sb = supabaseBrowser();
@@ -309,6 +348,7 @@ export async function bulkInsertLeads(rows: ImportRow[], ownerRepId?: string): P
       stage: 'new',
       cadence_id: DEFAULT_CADENCE,
       cadence_pos: 0,
+      deployed: false, // land in the staging pool, not the active pipeline
       owner_rep_id: ownerRepId ?? null,
     }));
   const { data, error } = await sb.from('leads').insert(payload).select('id');

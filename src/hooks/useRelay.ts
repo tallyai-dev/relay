@@ -3,11 +3,12 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
-export type View = 'leads' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile';
+export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile';
+export interface EnrichResult { found: boolean; name?: string; phone?: string; website?: string; city?: string; address?: string; hours?: string[]; error?: string }
 
 const DEFAULT_CADENCE_ID = '11111111-1111-1111-1111-111111111111';
 const SEED_CADENCES: Cadence[] = [
@@ -44,11 +45,12 @@ const last10 = (p?: string) => (p || '').replace(/\D/g, '').slice(-10);
 
 const DAY_MS = 864e5;
 const endOfToday = () => { const d = new Date(); d.setHours(23, 59, 59, 999); return d.getTime(); };
-// A lead is "due" if it's still in rotation and either never scheduled or its snooze has expired.
+// A lead is "due" if it's deployed into a cadence, still in rotation, and either
+// never scheduled or its snooze has expired. Staged leads are never due.
 const leadIsDue = (l: Lead) =>
-  l.stage !== 'won' && l.stage !== 'cold' && (!l.nextActionAt || new Date(l.nextActionAt).getTime() <= endOfToday());
+  l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && (!l.nextActionAt || new Date(l.nextActionAt).getTime() <= endOfToday());
 const leadIsScheduled = (l: Lead) =>
-  l.stage !== 'won' && l.stage !== 'cold' && !!l.nextActionAt && new Date(l.nextActionAt).getTime() > endOfToday();
+  l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && !!l.nextActionAt && new Date(l.nextActionAt).getTime() > endOfToday();
 
 export function useRelay() {
   const [view, setView] = useState<View>('leads');
@@ -180,7 +182,7 @@ export function useRelay() {
       ...prev,
       ...rows.map((r, i) => ({
         id: 'imp' + Date.now() + i, salon: r.salon, city: r.city || '', phone: r.phone || '',
-        email: r.email, stage: 'new' as Stage, cadenceId: DEFAULT_CADENCE_ID, cadencePos: 0,
+        email: r.email, stage: 'new' as Stage, cadenceId: DEFAULT_CADENCE_ID, cadencePos: 0, deployed: false,
         objection: 'Gatekeeper', lastTouch: 'New',
         contact: { id: 'c' + i, name: r.contactName || '—', role: r.role || 'Front desk', phone: r.phone },
       })),
@@ -193,7 +195,7 @@ export function useRelay() {
   const startFlow = useCallback((onlyIds?: string[]) => {
     const idSet = onlyIds ? new Set(onlyIds) : null;
     const queue: QueueItem[] = leadsRef.current
-      .filter((l) => l.stage !== 'won')
+      .filter((l) => l.deployed !== false && l.stage !== 'won') // staged leads aren't worked
       .filter((l) => !idSet || idSet.has(l.id))
       .map((l) => {
         // Run the lead's assigned cadence (its call/text/email steps, skipping waits);
@@ -517,6 +519,49 @@ export function useRelay() {
     if (enabled) assignLeadCadence(leadId, cadenceId);
   }, [enabled]);
 
+  // ── Staging pool ─────────────────────────────────────────────────────────────
+  const stagedLeads = leads.filter((l) => l.deployed === false);
+  const activeLeads = leads.filter((l) => l.deployed !== false);
+  // Deploy the N oldest staged leads into a cadence (they become due now).
+  const deployLeads = useCallback(async (count: number, cadenceId: string): Promise<number> => {
+    const pool = leadsRef.current.filter((l) => l.deployed === false); // oldest-first (fetch order)
+    const picked = pool.slice(0, Math.max(0, count)).map((l) => l.id);
+    if (!picked.length) return 0;
+    const idSet = new Set(picked);
+    setLeads((prev) => prev.map((l) => (idSet.has(l.id) ? { ...l, deployed: true, cadenceId, cadencePos: 0, nextActionAt: undefined, lastTouch: 'New' } : l)));
+    if (enabled) { const moved = await deployStagedLeads(picked.length, cadenceId, me?.id); return moved.length || picked.length; }
+    return picked.length;
+  }, [enabled, me]);
+
+  // ── Enrichment (Google Places) ───────────────────────────────────────────────
+  const enrichableLeads = leads.filter((l) => !l.phone || !l.website);
+  // Look a lead up on Google Places; returns what was found (does not save).
+  const enrichLead = useCallback(async (leadId: string): Promise<EnrichResult> => {
+    const lead = leadsRef.current.find((l) => l.id === leadId);
+    if (!lead) return { found: false };
+    if (!enabled) {
+      // Demo mode: fabricate a plausible result so the flow is demonstrable.
+      const slug = lead.salon.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return { found: true, name: lead.salon, phone: lead.phone || '(303) 555-0148', website: lead.website || `${slug}.com`, city: lead.city || 'Denver, CO', address: `${lead.city || 'Denver, CO'}`, hours: ['Mon–Fri 9 AM–6 PM', 'Sat 9 AM–4 PM', 'Sun closed'] };
+    }
+    try {
+      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ salon: lead.salon, city: lead.city }) });
+      return await res.json();
+    } catch { return { found: false, error: 'Lookup failed.' }; }
+  }, [enabled]);
+  // Apply accepted enrichment fields to a lead.
+  const saveEnrichment = useCallback((leadId: string, fields: { phone?: string; city?: string; website?: string }) => {
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? {
+      ...l,
+      phone: fields.phone ?? l.phone,
+      website: fields.website ?? l.website,
+      city: fields.city ?? l.city,
+      contact: l.contact ? { ...l.contact, phone: fields.phone ?? l.contact.phone } : l.contact,
+    } : l)));
+    if (enabled) updateLeadEnrichment(leadId, fields);
+    addActivity(leadId, { kind: 'note', ty: 'Enriched from Google', time: 'Just now', body: 'Filled missing info from Google Places.' });
+  }, [enabled, addActivity]);
+
   // ── Due-today scheduler ──────────────────────────────────────────────────────
   const dueLeads = leads.filter(leadIsDue);
   const scheduledLeads = leads.filter(leadIsScheduled);
@@ -589,5 +634,7 @@ export function useRelay() {
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead,
+    stagedLeads, activeLeads, deployLeads,
+    enrichableLeads, enrichLead, saveEnrichment,
   };
 }

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRelay } from '@/hooks/useRelay';
+import { useRelay, type EnrichResult } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
 import { placeCall, normalizePhone } from '@/lib/voice';
@@ -32,6 +32,8 @@ export default function RelayApp() {
         <TopBar r={r} onImport={() => setImportOpen(true)} />
         <div className="content">
           {r.view === 'leads' && <LeadsView r={r} onImport={() => setImportOpen(true)} />}
+          {r.view === 'staging' && <StagingView r={r} onImport={() => setImportOpen(true)} />}
+          {r.view === 'enrich' && <EnrichView r={r} />}
           {r.view === 'dialer' && <Dialer r={r} />}
           {r.view === 'keypad' && <Keypad r={r} />}
           {r.view === 'inbox' && <Inbox r={r} />}
@@ -167,7 +169,7 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
           ) : (
             <div style={{ textAlign: 'center', padding: '18px 0' }}>
               <div className="success-tick">✓</div>
-              <div><span className="import-count">{done}</span> leads imported{r.enabled ? ' to Supabase' : ' (demo)'}. Duplicates and blanks were skipped automatically.</div>
+              <div><span className="import-count">{done}</span> leads added to <b>staging</b>{r.enabled ? '' : ' (demo)'}. Duplicates and blanks were skipped. Deploy them into a cadence from the Staging tab when you’re ready to call.</div>
             </div>
           )}
         </div>
@@ -178,7 +180,7 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
               <button className="btn primary" onClick={run} disabled={busy || readyRows.length === 0}>{busy ? 'Importing…' : `Import ${readyRows.length} new lead${readyRows.length === 1 ? '' : 's'}`}</button>
             </>
           ) : (
-            <button className="btn primary" onClick={onClose}>Done</button>
+            <button className="btn primary" onClick={() => { r.setView('staging'); onClose(); }}>Go to staging →</button>
           )}
         </div>
       </div>
@@ -196,6 +198,8 @@ function Rail({ r }: { r: R }) {
     <nav className="rail">
       <div className="logo">R</div>
       {btn('leads', 'Leads', <path d="M3 6h18M3 12h18M3 18h18" />)}
+      {btn('staging', 'Staging', <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />)}
+      {btn('enrich', 'Enrich', <path d="M13 3l2.3 6.2L22 11.5l-6.7 2.3L13 20l-2.3-6.2L4 11.5l6.7-2.3zM5 3v3M3.5 4.5h3" />)}
       {btn('dialer', 'Workspace', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />)}
       {btn('keypad', 'Keypad', <><circle cx="7" cy="6" r="1.3" /><circle cx="12" cy="6" r="1.3" /><circle cx="17" cy="6" r="1.3" /><circle cx="7" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="17" cy="12" r="1.3" /><circle cx="7" cy="18" r="1.3" /><circle cx="12" cy="18" r="1.3" /><circle cx="17" cy="18" r="1.3" /></>)}
       <button className={r.view === 'inbox' ? 'on' : ''} title="Inbox" onClick={() => r.setView('inbox')} style={{ position: 'relative' }}>
@@ -244,7 +248,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   return (
     <section className="view on">
       <div className="page-head">
-        <div><h1>Salon prospecting — pipeline</h1><p>{r.leads.length} salons · working the “Cold Salon Outbound” cadence</p></div>
+        <div><h1>Salon prospecting — pipeline</h1><p>{r.activeLeads.length} active salons{r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
           {r.dueLeads.length > 0
@@ -261,7 +265,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
         <table>
           <thead><tr><th>Salon</th><th>Owner / contact</th><th>Next step</th><th>Last touch</th><th>Stage</th><th /></tr></thead>
           <tbody>
-            {r.leads.map((l, i) => (
+            {r.activeLeads.map((l, i) => (
               <tr key={l.id} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
                   <div><div className="nm">{l.salon}</div><div className="loc">{l.city}</div></div></div></td>
@@ -274,7 +278,218 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
             ))}
           </tbody>
         </table>
+        {r.activeLeads.length === 0 && (
+          <div className="empty-active">
+            <div className="ea-title">No active leads yet</div>
+            <div className="ea-sub">{r.stagedLeads.length > 0 ? `You have ${r.stagedLeads.length} leads waiting in staging.` : 'Import some leads to get started.'}</div>
+            {r.stagedLeads.length > 0
+              ? <button className="btn primary" onClick={() => r.setView('staging')}>Go to staging →</button>
+              : <button className="btn primary" onClick={onImport}>{Icon.import}Import leads</button>}
+          </div>
+        )}
       </div>
+    </section>
+  );
+}
+
+// ── Staging pool + Deploy slider ──────────────────────────────────────────────
+function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
+  const pool = r.stagedLeads.length;
+  const [amount, setAmount] = useState(25);
+  const [cadenceId, setCadenceId] = useState(r.cadences[0]?.id || '');
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const amt = Math.min(amount, pool);
+  const cad = r.cadences.find((c) => c.id === cadenceId) || r.cadences[0];
+
+  const deploy = async () => {
+    if (amt <= 0 || !cad) return;
+    setBusy(true);
+    const n = await r.deployLeads(amt, cad.id);
+    setBusy(false);
+    setFlash(`Deployed ${n} lead${n === 1 ? '' : 's'} into “${cad.name}”.`);
+    setTimeout(() => setFlash(null), 4000);
+  };
+
+  return (
+    <section className="view on">
+      <div className="page-head">
+        <div><h1>Staging</h1><p>Imported leads wait here until you deploy them into a cadence.</p></div>
+        <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
+      </div>
+
+      {flash && <div className="deploy-flash">✓ {flash}</div>}
+
+      <div className="stage-wrap">
+        <div className="stage-deploy">
+          <div className="pool-big"><span className="n">{pool}</span><span className="lbl">leads waiting in staging</span></div>
+          {pool === 0 ? (
+            <div className="stage-empty">Nothing staged right now. Imported CSVs land here so you can deploy them in batches on your call days.</div>
+          ) : (
+            <>
+              <div className="fld">
+                <label>Into cadence</label>
+                <select value={cadenceId} onChange={(e) => setCadenceId(e.target.value)}>
+                  {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className="fld">
+                <label>How many to deploy</label>
+                <div className="amt-row">
+                  <button className="amt-btn" onClick={() => setAmount((a) => Math.max(1, a - 5))}>–</button>
+                  <div className="amt-val">{amt}</div>
+                  <button className="amt-btn" onClick={() => setAmount((a) => Math.min(pool, a + 5))}>+</button>
+                  <div className="amt-quick">
+                    {[10, 25, 50].filter((n) => n <= pool).map((n) => (
+                      <button key={n} className={amount === n ? 'on' : ''} onClick={() => setAmount(n)}>{n}</button>
+                    ))}
+                    <button className={amount >= pool ? 'on' : ''} onClick={() => setAmount(pool)}>All {pool}</button>
+                  </div>
+                </div>
+                <input className="amt-slider" type="range" min={1} max={pool} value={amt} onChange={(e) => setAmount(Number(e.target.value))} />
+              </div>
+              <button className="btn primary deploy-cta" onClick={deploy} disabled={busy || amt <= 0}>
+                {Icon.flow}{busy ? 'Deploying…' : `Deploy ${amt} into ${cad?.name || 'cadence'}`}
+              </button>
+              <div className="deploy-stat">
+                <span className="chip b">{r.activeLeads.length} active</span>
+                <span className="chip a">{r.dueLeads.length} due today</span>
+                <span className="chip n">{pool} staged</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="stage-list">
+          <div className="sl-head">Waiting in staging {pool > 0 && <span>{pool}</span>}</div>
+          {pool === 0 ? <div className="muted" style={{ padding: 16 }}>Empty — imported leads will appear here.</div> : (
+            <div className="sl-rows">
+              {r.stagedLeads.slice(0, 60).map((l, i) => (
+                <div key={l.id} className="sl-row">
+                  <div className="avatar sm" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
+                  <div className="sl-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}{l.phone ? ` · ${l.phone}` : ''}</div></div>
+                  {i < amt && <span className="sl-next">next ↑</span>}
+                </div>
+              ))}
+              {pool > 60 && <div className="muted" style={{ padding: '10px 14px' }}>+ {pool - 60} more</div>}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ── Lead enrichment (Google Places) ──────────────────────────────────────────
+function EnrichView({ r }: { r: R }) {
+  const leads = r.enrichableLeads;
+  const [sel, setSel] = useState<string | null>(leads[0]?.id || null);
+  const [results, setResults] = useState<Record<string, EnrichResult | 'loading'>>({});
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState<string | null>(null);
+
+  const selLead = sel ? r.leadById(sel) : undefined;
+  const selRes = sel ? results[sel] : undefined;
+
+  const runOne = async (id: string) => {
+    setResults((p) => ({ ...p, [id]: 'loading' }));
+    const res = await r.enrichLead(id);
+    setResults((p) => ({ ...p, [id]: res }));
+    return res;
+  };
+  // Auto-look-up the selected lead the first time it's opened.
+  useEffect(() => { if (sel && results[sel] === undefined) runOne(sel); /* eslint-disable-next-line */ }, [sel]);
+
+  // Only offer fields that are actually missing / new on the lead.
+  const newFields = (lead: Lead | undefined, res: EnrichResult) => {
+    const f: { phone?: string; city?: string; website?: string } = {};
+    if (res.phone && !lead?.phone) f.phone = res.phone;
+    if (res.website && !lead?.website) f.website = res.website;
+    if (res.city && !lead?.city) f.city = res.city;
+    return f;
+  };
+
+  const acceptSel = () => {
+    if (!sel || !selLead || !selRes || selRes === 'loading' || !selRes.found) return;
+    r.saveEnrichment(sel, newFields(selLead, selRes));
+    setSaved((p) => new Set(p).add(sel));
+  };
+
+  const enrichAll = async () => {
+    const todo = leads.filter((l) => !saved.has(l.id));
+    let filled = 0;
+    for (const l of todo) {
+      setBulk(`Looking up ${l.salon}…`);
+      const res = results[l.id] && results[l.id] !== 'loading' ? (results[l.id] as EnrichResult) : await runOne(l.id);
+      if (res.found) {
+        const f = newFields(l, res);
+        if (Object.keys(f).length) { r.saveEnrichment(l.id, f); filled++; }
+        setSaved((p) => new Set(p).add(l.id));
+      }
+    }
+    setBulk(`Done — filled info on ${filled} lead${filled === 1 ? '' : 's'}.`);
+    setTimeout(() => setBulk(null), 5000);
+  };
+
+  const missChips = (l: Lead) => (
+    <span className="miss">
+      {!l.phone && <span className="mchip">No phone</span>}
+      {!l.website && <span className="mchip">No website</span>}
+    </span>
+  );
+
+  return (
+    <section className="view on">
+      <div className="page-head">
+        <div><h1>Enrich leads</h1><p>{leads.length} lead{leads.length === 1 ? '' : 's'} missing phone or website · filled from Google Places</p></div>
+        {leads.length > 0 && <button className="btn primary" onClick={enrichAll}>✨ Enrich all {leads.length}</button>}
+      </div>
+      {bulk && <div className="deploy-flash">{bulk}</div>}
+
+      {leads.length === 0 ? (
+        <div className="empty-active"><div className="ea-title">Every lead has its basics 🎉</div><div className="ea-sub">Nothing to enrich — all your leads have a phone and website.</div></div>
+      ) : (
+        <div className="enr-wrap">
+          <div className="enr-list">
+            {leads.map((l, i) => (
+              <div key={l.id} className={`enr-row ${sel === l.id ? 'on' : ''}`} onClick={() => setSel(l.id)}>
+                <div className="avatar sm" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
+                <div className="enr-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}</div></div>
+                {saved.has(l.id) ? <span className="mchip ok">Enriched ✓</span> : missChips(l)}
+              </div>
+            ))}
+          </div>
+
+          <div className="enr-panel">
+            {!selLead ? <div className="muted" style={{ padding: 18 }}>Select a lead.</div> : (
+              <>
+                <div className="enr-pt">Found for {selLead.salon}</div>
+                {selRes === 'loading' || selRes === undefined ? (
+                  <div className="enr-loading">Looking up on Google Places…</div>
+                ) : !selRes.found ? (
+                  <div className="enr-none">No Google match found for “{selLead.salon}{selLead.city ? `, ${selLead.city}` : ''}”. Try adding a city, or fill it in manually.<button className="btn sm" style={{ marginTop: 12 }} onClick={() => runOne(selLead.id)}>Retry</button></div>
+                ) : (
+                  <>
+                    {selRes.phone && <div className="found"><span className="k">Phone</span><span className="v">{selRes.phone}</span>{selLead.phone ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
+                    {selRes.website && <div className="found"><span className="k">Website</span><span className="v">{selRes.website}</span>{selLead.website ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
+                    {selRes.city && <div className="found"><span className="k">City</span><span className="v">{selRes.city}</span>{selLead.city ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
+                    {selRes.hours && <div className="found"><span className="k">Hours</span><span className="v" style={{ fontWeight: 400, fontSize: 12 }}>{selRes.hours[0]}{selRes.hours.length > 1 ? ` · +${selRes.hours.length - 1} more` : ''}</span></div>}
+                    {selRes.address && <div className="found"><span className="k">Address</span><span className="v" style={{ fontWeight: 400, fontSize: 12 }}>{selRes.address}</span></div>}
+                    <div className="enr-acc">
+                      {saved.has(sel!) ? <span className="enr-done">✓ Saved</span> : (
+                        Object.keys(newFields(selLead, selRes)).length
+                          ? <button className="btn primary" onClick={acceptSel}>Accept &amp; save {Object.keys(newFields(selLead, selRes)).length} new field{Object.keys(newFields(selLead, selRes)).length === 1 ? '' : 's'}</button>
+                          : <span className="muted">Nothing new to add — already complete.</span>
+                      )}
+                    </div>
+                  </>
+                )}
+                <div className="keynote">Data from Google Places. Review before saving — occasionally the top match isn’t the right business.</div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

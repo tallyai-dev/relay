@@ -25,11 +25,13 @@ export interface Lead {
   city?: string;
   phone?: string;
   email?: string;
+  website?: string;
   bookingSystem?: string;
   source?: string;
   stage: Stage;
   cadenceId: string;
   cadencePos: number;
+  deployed?: boolean;    // false = sitting in the staging pool, not yet in a cadence
   nextActionAt?: string; // ISO — when this lead is next due (null = due now / never scheduled)
   contact?: Contact;
   lastTouch?: string;
