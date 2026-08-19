@@ -29,7 +29,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     e.preventDefault();
     setErr('');
     const sb = supabaseBrowser()!;
-    const fn = mode === 'signin' ? sb.auth.signInWithPassword : sb.auth.signUp;
+    const fn = mode === 'signin' ? sb.auth.signInWithPassword.bind(sb.auth) : sb.auth.signUp.bind(sb.auth);
     const { error } = await fn({ email, password });
     if (error) setErr(error.message);
   };
