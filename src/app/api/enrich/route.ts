@@ -99,6 +99,50 @@ async function scanSite(url: string): Promise<{ bookingSystem?: string; email?: 
   return { bookingSystem, email };
 }
 
+// FALLBACK 1 (zero-config): many salons' only web presence is a booking-platform
+// page whose slug is just their name (e.g. castorandpollux.glossgenius.com). When
+// Google Places has no website, derive slug candidates from the name and verify a
+// GlossGenius page actually belongs to this salon (its significant name words all
+// appear on the page — guards against a wrong-slug collision).
+function nameWords(salon: string): string[] {
+  return salon.toLowerCase().replace(/&/g, 'and')
+    .replace(/\b(the|salon|spa|studio|hair|beauty|co|llc|inc)\b/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
+}
+async function guessBookingSite(salon: string): Promise<{ website?: string; bookingSystem?: string }> {
+  const words = nameWords(salon);
+  if (!words.length) return {};
+  const slugs = Array.from(new Set([words.join(''), words.join('-')])).filter((s) => s.length >= 3 && s.length <= 40);
+  const sig = words.filter((w) => w.length >= 4); // distinctive words to confirm the match
+  for (const slug of slugs) {
+    const url = `https://${slug}.glossgenius.com`;
+    const html = await fetchText(url, 3500);
+    if (!html) continue;
+    const page = html.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (sig.length && sig.every((w) => page.includes(w))) return { website: url, bookingSystem: 'GlossGenius' };
+  }
+  return {};
+}
+
+// FALLBACK 2: web search (Google Programmable Search). When Places has no site,
+// search the salon by name and take the best result — preferring a known booking
+// domain, else the salon's own site, skipping directories/social aggregators.
+async function webSearchSite(salon: string, city: string): Promise<string | undefined> {
+  const key = process.env.GOOGLE_CSE_KEY || process.env.GOOGLE_PLACES_API_KEY;
+  const cx = process.env.GOOGLE_CSE_ID;
+  if (!key || !cx) return undefined;
+  const q = encodeURIComponent(`${salon} ${city} salon`.trim());
+  try {
+    const res = await fetch(`https://www.googleapis.com/customsearch/v1?key=${key}&cx=${cx}&q=${q}&num=8`);
+    if (!res.ok) { console.error('cse', res.status, (await res.text()).slice(0, 160)); return undefined; }
+    const items: any[] = (await res.json()).items || [];
+    const links: string[] = items.map((i) => i.link).filter(Boolean);
+    const bookingDomains = /glossgenius|vagaro|booksy|fresha|styleseat|schedulicity|squareup|square\.site|mindbodyonline|acuityscheduling|setmore|gettimely|phorest|zenoti/i;
+    const skip = /facebook\.|instagram\.|yelp\.|birdeye|mapquest|yellowpages|foursquare|linkedin\.|tiktok\.|google\.|bing\.|twitter\.|x\.com|pinterest|phenixsalonsuites|salonsuites/i;
+    return links.find((l) => bookingDomains.test(l)) || links.find((l) => !skip.test(l));
+  } catch (e: any) { console.error('cse exception', e?.message); return undefined; }
+}
+
 function cityStateFrom(addr: string): string | undefined {
   // "123 Main St, Denver, CO 80202, USA" -> "Denver, CO"
   const parts = (addr || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -157,13 +201,26 @@ export async function POST(req: Request) {
       })
       .sort((a, b) => b.score - a.score)[0].pl;
 
-    const website = p.websiteUri ? String(p.websiteUri).replace(/^https?:\/\//, '').replace(/\/$/, '') : undefined;
+    // Resolve a website. Prefer the Google Business Profile's website; when it has
+    // none (common — the salon's only web presence is a booking page or a suite
+    // listing), fall back to a booking-URL guess, then a web search.
+    let websiteUri: string | undefined = p.websiteUri || undefined;
+    let bookingSystem: string | undefined;
+    if (!websiteUri) {
+      const g = await guessBookingSite(salon);
+      if (g.website) { websiteUri = g.website; bookingSystem = g.bookingSystem; }
+    }
+    if (!websiteUri) {
+      websiteUri = await webSearchSite(salon, city);
+    }
+
+    const website = websiteUri ? websiteUri.replace(/^https?:\/\//, '').replace(/\/$/, '') : undefined;
     // If they have a site, crawl it for the booking platform + an email (best-effort).
-    const site = p.websiteUri ? await scanSite(p.websiteUri) : {};
+    const site = websiteUri ? await scanSite(websiteUri) : {};
     // Many salons' "website" IS their booking platform (glossgenius.com,
     // vagaro.com, booksy.com…). Detect that straight from the URL — no crawl
     // needed, and it works even when the page is a JS-only stub.
-    const bookingSystem = site.bookingSystem || (p.websiteUri ? detectBooking(p.websiteUri) : undefined);
+    if (!bookingSystem) bookingSystem = site.bookingSystem || (websiteUri ? detectBooking(websiteUri) : undefined);
     return Response.json({
       found: true,
       name: p.displayName?.text || undefined,

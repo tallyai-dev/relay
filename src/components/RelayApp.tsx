@@ -4,7 +4,7 @@ import { useRelay, isOverdue, type EnrichResult } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
 import { placeCall, normalizePhone } from '@/lib/voice';
-import { openCalendly } from '@/lib/calendly';
+import { openCalendly, CALENDLY_URL } from '@/lib/calendly';
 import { analyzeImport } from '@/lib/csv';
 
 type R = ReturnType<typeof useRelay>;
@@ -880,6 +880,22 @@ function firstName(lead: Lead): string {
 }
 type EmailTemplate = { key: string; label: string; subject: (l: Lead) => string; body: (l: Lead) => string };
 const EMAIL_TEMPLATES: EmailTemplate[] = [
+  {
+    key: 'missed',
+    label: 'Missed you (no connect)',
+    subject: (l) => `Sorry I missed you — quick idea for ${l.salon}`,
+    body: (l) => `Hi ${firstName(l)},
+
+Tried giving ${l.salon} a call and just missed you — no worries.
+
+Most salons lose a few bookings a week to calls that come in after hours or when the front desk is buried. Tally fixes that two ways: a missed-call text-back that instantly replies to callers with your booking link, and an AI voice receptionist that answers questions and books appointments straight into your calendar — you don't even have to change your phone system.
+
+Want me to show you how it'd work for ${l.salon}? Grab 15 minutes here:
+${CALENDLY_URL}
+
+Thanks,
+${EMAIL_SIGNOFF}`,
+  },
   {
     key: 'info',
     label: 'Info & pricing',
