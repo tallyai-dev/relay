@@ -74,12 +74,24 @@ function relTime(iso?: string): string {
 export async function fetchLeads(): Promise<Lead[]> {
   const sb = supabaseBrowser();
   if (!sb) return [];
-  const { data, error } = await sb
-    .from('leads')
-    .select('*, contacts(id,name,role,phone,email,is_primary)')
-    .order('created_at', { ascending: true });
-  if (error) { console.error('fetchLeads', error); return []; }
-  return (data || []).map(rowToLead);
+  // Supabase/PostgREST caps a single response at 1000 rows. With more leads than
+  // that, a plain select silently drops the overflow (the newest leads, given the
+  // ascending sort) — which made the "due today" count wrong and inconsistent
+  // between devices. Page through in 1000-row chunks so we always load them all.
+  const PAGE = 1000;
+  const all: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from('leads')
+      .select('*, contacts(id,name,role,phone,email,is_primary)')
+      .order('created_at', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) { console.error('fetchLeads', error); break; }
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < PAGE) break;
+  }
+  return all.map(rowToLead);
 }
 
 export interface DailyStats {
