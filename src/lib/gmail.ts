@@ -35,15 +35,56 @@ const b64url = (s: string) => Buffer.from(s, 'utf8').toString('base64').replace(
 const decodeB64Url = (s: string) => { try { return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'); } catch { return ''; } };
 const emailOf = (v: string) => { const m = v.match(/<([^>]+)>/); return (m ? m[1] : v).trim().toLowerCase(); };
 
-// Send a plaintext email from the configured mailbox.
-export async function sendGmail(to: string, subject: string, body: string): Promise<{ ok: boolean; id?: string; error?: string }> {
+const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Turn the plaintext body into an HTML part: escape it, rewrite every http(s)
+// link into a click-tracking redirect, convert newlines to <br>, and append an
+// invisible open-tracking pixel. `trackId` is the message row id; `baseUrl` is
+// the public app origin the pixel/click routes live on.
+function buildTrackedHtml(body: string, trackId: string, baseUrl: string): string {
+  const re = /(https?:\/\/[^\s<>()]+)/g;
+  let html = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) {
+    html += escHtml(body.slice(last, m.index));
+    const url = m[1];
+    const tracked = `${baseUrl}/api/email/click?m=${encodeURIComponent(trackId)}&u=${b64url(url)}`;
+    html += `<a href="${tracked}" style="color:#0a7d3a">${escHtml(url)}</a>`;
+    last = m.index + url.length;
+  }
+  html += escHtml(body.slice(last));
+  html = html.replace(/\r\n|\r|\n/g, '<br>');
+  const pixel = `<img src="${baseUrl}/api/email/pixel?m=${encodeURIComponent(trackId)}" width="1" height="1" alt="" style="display:none;max-height:0;overflow:hidden">`;
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#111">${html}</div>${pixel}`;
+}
+
+// Send an email from the configured mailbox. When track {id,baseUrl} is given,
+// sends multipart/alternative (plain + tracked HTML) so opens and link clicks
+// are recorded; otherwise sends plain text only.
+export async function sendGmail(
+  to: string, subject: string, body: string,
+  track?: { id: string; baseUrl: string },
+): Promise<{ ok: boolean; id?: string; error?: string }> {
   const from = process.env.GMAIL_SENDER || '';
   const tok = await accessToken();
   if (!tok) return { ok: false, error: 'Gmail auth failed — check the refresh token.' };
-  const mime = [
-    `From: ${from}`, `To: ${to}`, `Subject: ${subject || ''}`,
-    'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', '', body || '',
-  ].join('\r\n');
+  let mime: string;
+  if (track) {
+    const boundary = `relay_${track.id.replace(/[^a-zA-Z0-9]/g, '')}`;
+    mime = [
+      `From: ${from}`, `To: ${to}`, `Subject: ${subject || ''}`,
+      'MIME-Version: 1.0', `Content-Type: multipart/alternative; boundary="${boundary}"`, '',
+      `--${boundary}`, 'Content-Type: text/plain; charset=UTF-8', '', body || '',
+      `--${boundary}`, 'Content-Type: text/html; charset=UTF-8', '', buildTrackedHtml(body || '', track.id, track.baseUrl),
+      `--${boundary}--`, '',
+    ].join('\r\n');
+  } else {
+    mime = [
+      `From: ${from}`, `To: ${to}`, `Subject: ${subject || ''}`,
+      'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', '', body || '',
+    ].join('\r\n');
+  }
   const res = await fetch(`${GMAIL}/messages/send`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },

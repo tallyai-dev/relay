@@ -941,10 +941,12 @@ function Dialer({ r }: { r: R }) {
           {(inFlow ? r.flow.queue.map((q) => q.leadId) : (r.dueLeads.length ? r.dueLeads : r.activeLeads).map((l) => l.id)).map((id) => {
             const l = r.leadById(id)!; const li = r.leads.findIndex((x) => x.id === id);
             const done = inFlow && r.flow.queue.findIndex((q) => q.leadId === id) < r.flow.pos;
+            const warm = r.warmLeadIds.has(id);
             return (
-              <div key={id} className={`ws-item ${id === lead.id ? 'on' : ''} ${done ? 'done' : ''}`} onClick={() => r.setActiveLeadId(id)}>
+              <div key={id} className={`ws-item ${id === lead.id ? 'on' : ''} ${done ? 'done' : ''} ${warm ? 'warm' : ''}`} onClick={() => r.setActiveLeadId(id)}>
                 <div className="avatar ai" style={{ background: colorFor(li) }}>{initials(l.salon)}</div>
-                <div><div className="nm">{l.salon}</div><div className="mt">{l.contact?.name === '—' ? l.contact?.role : l.contact?.name}</div></div>
+                <div><div className="nm">{l.salon}{warm && <span className="warm-flag" title="Opened or clicked your email">🔥</span>}</div>
+                  <div className="mt">{warm ? 'Warm · engaged your email' : (l.contact?.name === '—' ? l.contact?.role : l.contact?.name)}</div></div>
                 {done ? <div className="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg></div>
                   : <div className="stp">{l.cadencePos + 1}/5</div>}
               </div>

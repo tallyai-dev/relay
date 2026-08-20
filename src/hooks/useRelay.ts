@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
@@ -91,6 +91,20 @@ export function useRelay() {
   cadencesRef.current = cadences;
   const activitiesRef = useRef<Record<string, Activity[]>>(activities);
   activitiesRef.current = activities;
+
+  // "Warm" leads: someone who clicked a tracked link, or opened an outbound
+  // email 2+ times. These float to the top of the daily queue. Clicks count
+  // more than opens because pixel opens are noisy (Apple Mail / Gmail proxying).
+  const warmLeadIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of messages) {
+      if (m.leadId && m.direction === 'out' && m.channel === 'email' &&
+          ((m.clickCount || 0) > 0 || (m.openCount || 0) >= 2)) s.add(m.leadId);
+    }
+    return s;
+  }, [messages]);
+  const warmRef = useRef<Set<string>>(warmLeadIds);
+  warmRef.current = warmLeadIds;
 
   const enabled = repoEnabled(); // Supabase-backed vs in-memory demo
   const loaded = useRef<Set<string>>(new Set());
@@ -257,7 +271,13 @@ export function useRelay() {
     const book = leadsRef.current
       .filter((l) => leadIsDue(l))
       .filter((l) => !idSet || idSet.has(l.id))
-      .sort((a, b) => (a.nextActionAt ? new Date(a.nextActionAt).getTime() : startOfToday()) - (b.nextActionAt ? new Date(b.nextActionAt).getTime() : startOfToday()));
+      .sort((a, b) => {
+        // Warm leads (opened/clicked an email) come first, then most-overdue.
+        const wa = warmRef.current.has(a.id) ? 0 : 1;
+        const wb = warmRef.current.has(b.id) ? 0 : 1;
+        if (wa !== wb) return wa - wb;
+        return (a.nextActionAt ? new Date(a.nextActionAt).getTime() : startOfToday()) - (b.nextActionAt ? new Date(b.nextActionAt).getTime() : startOfToday());
+      });
     if (!book.length) {
       // Nothing due — show the "all caught up" screen instead of a stale queue.
       setFlow((f) => ({ ...f, on: true, done: true, queue: [], pos: 0, phase: 'action', notice: null }));
@@ -741,7 +761,14 @@ export function useRelay() {
   }, [enabled, addActivity]);
 
   // ── Due-today scheduler ──────────────────────────────────────────────────────
-  const dueLeads = leads.filter(leadIsDue);
+  const dueLeads = leads.filter(leadIsDue).sort((a, b) => {
+    const wa = warmLeadIds.has(a.id) ? 0 : 1;
+    const wb = warmLeadIds.has(b.id) ? 0 : 1;
+    if (wa !== wb) return wa - wb;
+    const ta = a.nextActionAt ? new Date(a.nextActionAt).getTime() : startOfToday();
+    const tb = b.nextActionAt ? new Date(b.nextActionAt).getTime() : startOfToday();
+    return ta - tb;
+  });
   const scheduledLeads = leads.filter(leadIsScheduled);
   const startDueFlow = useCallback(() => startFlow(dueLeads.map((l) => l.id)), [startFlow, dueLeads]);
   // Manually snooze/reschedule a lead N days out (days<=0 clears → due now).
@@ -811,7 +838,7 @@ export function useRelay() {
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
-    dueLeads, scheduledLeads, startDueFlow, snoozeLead,
+    dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
     stagedLeads, activeLeads, deployLeads,
     enrichableLeads, enrichLead, saveEnrichment, deleteLead, removeFromCadence,
   };

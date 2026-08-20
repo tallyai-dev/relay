@@ -253,6 +253,8 @@ export async function fetchMessages(): Promise<Message[]> {
     time: new Date(r.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
     isRead: r.is_read,
     phone: (r.direction === 'in' ? r.from_addr : r.to_addr) || undefined,
+    openCount: r.open_count ?? 0,
+    clickCount: r.click_count ?? 0,
   }));
 }
 
@@ -262,6 +264,7 @@ export function rowToMessage(r: any): Message {
     channel: r.channel, direction: r.direction, subject: r.subject || undefined,
     body: r.body || '', time: 'just now', isRead: r.is_read,
     phone: (r.direction === 'in' ? r.from_addr : r.to_addr) || undefined,
+    openCount: r.open_count ?? 0, clickCount: r.click_count ?? 0,
   };
 }
 

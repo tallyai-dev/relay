@@ -99,6 +99,8 @@ export interface Message {
   phone?: string;    // the counterpart number (their number), for threading when no lead
   pending?: boolean; // optimistic send in flight
   failed?: boolean;  // provider rejected the send
+  openCount?: number;  // outbound email: times the tracking pixel loaded
+  clickCount?: number; // outbound email: times a tracked link was clicked
 }
 
 // A single unit of work Flow hands the rep, produced by the cadence engine.

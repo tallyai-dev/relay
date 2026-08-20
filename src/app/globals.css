@@ -122,6 +122,10 @@
     background:#e6f6ec;border:1px solid #bfe6cd;border-radius:999px;padding:2px 8px;text-transform:none}
   .ws-item{padding:9px 14px;border-bottom:1px solid var(--line2);cursor:pointer;display:flex;gap:9px;align-items:center}
   .ws-item:hover{background:#f2f5f3}
+  .ws-item.warm{background:linear-gradient(90deg,#fff7ed,#fff);box-shadow:inset 3px 0 0 #f59e0b}
+  .ws-item.warm:hover{background:linear-gradient(90deg,#feefd8,#fff)}
+  .ws-item .warm-flag{margin-left:5px;font-size:11px;vertical-align:middle}
+  .ws-item.warm .mt{color:#b7791f;font-weight:600}
   .ws-item.on{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
   .ws-item .ai{width:26px;height:26px;font-size:10px;border-radius:7px}
   .ws-item .nm{font-weight:700;font-size:12px}
