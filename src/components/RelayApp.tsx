@@ -897,6 +897,22 @@ Thanks,
 ${EMAIL_SIGNOFF}`,
   },
   {
+    key: 'referral',
+    label: 'Stylist referral (email owner)',
+    subject: (l) => `A quick idea for ${l.salon}`,
+    body: (l) => `Hi there,
+
+I spoke with someone on your team at ${l.salon} and they suggested I reach out to you directly.
+
+Most salons lose a few bookings a week to calls that come in after hours or when the front desk is buried. Tally fixes that two ways: a missed-call text-back that instantly replies to callers with your booking link, and an AI voice receptionist that answers questions and books appointments straight into your calendar — you don't even have to change your phone system.
+
+Worth a quick look? Grab 15 minutes here and I'll show you how it'd work for ${l.salon}:
+${CALENDLY_URL}
+
+Thanks,
+${EMAIL_SIGNOFF}`,
+  },
+  {
     key: 'info',
     label: 'Info & pricing',
     subject: (l) => `Tally AI for ${l.salon}`,
