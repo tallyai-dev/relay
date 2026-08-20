@@ -937,8 +937,8 @@ function Dialer({ r }: { r: R }) {
       <div className={`ws${r.activeCall ? ' calling' : ''}`}>
         {/* queue rail */}
         <div className="ws-list">
-          <div className="lh"><span>Session queue</span></div>
-          {(inFlow ? r.flow.queue.map((q) => q.leadId) : r.leads.map((l) => l.id)).map((id) => {
+          <div className="lh"><span>Session queue</span>{!inFlow && <em className="lh-ct">{r.dueLeads.length} due today</em>}</div>
+          {(inFlow ? r.flow.queue.map((q) => q.leadId) : (r.dueLeads.length ? r.dueLeads : r.activeLeads).map((l) => l.id)).map((id) => {
             const l = r.leadById(id)!; const li = r.leads.findIndex((x) => x.id === id);
             const done = inFlow && r.flow.queue.findIndex((q) => q.leadId === id) < r.flow.pos;
             return (
