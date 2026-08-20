@@ -802,34 +802,61 @@ ${EMAIL_SIGNOFF}`,
   },
 ];
 
-function QuickEmail({ lead }: { lead: Lead }) {
+function QuickEmail({ r, lead }: { r: R; lead: Lead }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
   const hasEmail = !!lead.email;
-  const send = (t: EmailTemplate) => {
-    const url = `mailto:${encodeURIComponent(lead.email!)}?subject=${encodeURIComponent(t.subject(lead))}&body=${encodeURIComponent(t.body(lead))}`;
+  return (
+    <>
+      <button className="btn sm" disabled={!hasEmail} onClick={() => setOpen(true)}
+        title={hasEmail ? `Email ${lead.email}` : 'No email on file — enrich the lead first'}>✉ Email</button>
+      {open && hasEmail && <EmailComposer r={r} lead={lead} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+// In-app email composer: edit the subject/body (start from a template or blank)
+// and send it via Gmail as sales@gettallyai.com. Logged to the lead + threaded
+// into the Inbox; replies sync back. "Open in Gmail" is kept as a fallback.
+function EmailComposer({ r, lead, onClose }: { r: R; lead: Lead; onClose: () => void }) {
+  const [subject, setSubject] = useState(EMAIL_TEMPLATES[0].subject(lead));
+  const [body, setBody] = useState(EMAIL_TEMPLATES[0].body(lead));
+  const [sending, setSending] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const apply = (t: EmailTemplate) => { setSubject(t.subject(lead)); setBody(t.body(lead)); };
+  const send = async () => {
+    setSending(true); setErr(null);
+    const res = await r.sendLeadEmail(lead.id, subject, body);
+    setSending(false);
+    if (res.ok) onClose();
+    else setErr(res.error || 'Send failed. Check the email setup.');
+  };
+  const openInGmail = () => {
+    const url = `mailto:${encodeURIComponent(lead.email!)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     const a = document.createElement('a'); a.href = url; a.click();
-    setOpen(false);
+    onClose();
   };
   return (
-    <div className="quickmail" ref={ref}>
-      <button className="btn sm" disabled={!hasEmail} onClick={() => setOpen((v) => !v)}
-        title={hasEmail ? `Email ${lead.email} from your own inbox` : 'No email on file — enrich the lead first'}>✉ Email</button>
-      {open && hasEmail && (
-        <div className="quickmail-menu">
-          <div className="quickmail-hd">Opens a draft in your mail app — you review &amp; send. Goes to {lead.email}.</div>
-          {EMAIL_TEMPLATES.map((t) => (
-            <button key={t.key} className="quickmail-item" onClick={() => send(t)}>{t.label}</button>
-          ))}
-          <button className="quickmail-item blank" onClick={() => send({ key: 'blank', label: 'Blank', subject: () => '', body: () => '' })}>Blank email</button>
+    <div className="overlay on" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal email-modal" style={{ maxWidth: 620 }}>
+        <div className="mh"><h3>Email {lead.salon}</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="mb em-body-wrap">
+          <div className="em-tofrom">To <b>{lead.email}</b> · from <b>sales@gettallyai.com</b></div>
+          <div className="em-templates">
+            <span className="em-tpl-label">Start from:</span>
+            {EMAIL_TEMPLATES.map((t) => <button key={t.key} className="em-tpl" onClick={() => apply(t)}>{t.label}</button>)}
+            <button className="em-tpl" onClick={() => { setSubject(''); setBody(''); }}>Blank</button>
+          </div>
+          <input className="em-subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
+          <textarea className="em-body" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write your email…" />
+          {err && <div className="em-err">{err}</div>}
         </div>
-      )}
+        <div className="mf">
+          <button className="btn sm" onClick={openInGmail} title="Open a draft in your own mail app instead">Open in Gmail</button>
+          <div style={{ flex: 1 }} />
+          <button className="btn sm" onClick={onClose}>Cancel</button>
+          <button className="btn sm primary" disabled={sending} onClick={send}>{sending ? 'Sending…' : 'Send email'}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -952,7 +979,7 @@ function Dialer({ r }: { r: R }) {
                 <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
               )}
             </div>
-            <div className="r"><QuickEmail lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           {inFlow ? (

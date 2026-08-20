@@ -524,6 +524,22 @@ export function useRelay() {
     advance('onward');
   }, [current, addActivity, advance, leadById, enabled, sendSms, sendEmailApi, reconcileSent]);
 
+  // Send a one-off email to a lead from the salon card (via Gmail). Threads it
+  // into the Inbox + logs it, and only counts/logs on a successful send.
+  const sendLeadEmail = useCallback(async (leadId: string, subject: string, body: string): Promise<{ ok: boolean; error?: string }> => {
+    const lead = leadById(leadId);
+    if (!lead?.email) return { ok: false, error: 'No email on file for this lead.' };
+    const tempId = uid();
+    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead.salon || '', channel: 'email', direction: 'out', subject, body, time: 'now', isRead: true, pending: true, phone: lead.phone }]);
+    const res = await sendEmailApi(lead.email, subject, body, enabled ? leadId : undefined);
+    reconcileSent(tempId, res);
+    if (res.ok) {
+      setStats((s) => ({ ...s, emails: s.emails + 1 }));
+      addActivity(leadId, { kind: 'email', direction: 'out', ty: 'Email sent', time: 'Just now', body: subject ? `${subject} — ${body}` : body });
+    }
+    return res;
+  }, [leadById, enabled, sendEmailApi, reconcileSent, addActivity]);
+
   const startNote = useCallback((activityId: string, aiText: string, adv: 'onward' | 'next_salon') => {
     setFlow((f) => ({ ...f, phase: 'note', pendingAdvance: adv, noteActivityId: activityId, noteAiText: aiText }));
   }, []);
@@ -789,7 +805,7 @@ export function useRelay() {
     view, setView, leads, activities, stats, activeLeadId, setActiveLeadId, leadById,
     flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads, importCleanRows,
     me, reps, signOut,
-    startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow,
+    startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow, sendLeadEmail,
     addActivity, setStage,
     messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, sendThreadReply, retrySend, threadKeyForMessage,
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
