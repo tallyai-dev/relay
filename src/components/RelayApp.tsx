@@ -1204,16 +1204,34 @@ function TimelineItem({ h }: { h: Activity }) {
 function ScriptPanel({ lead }: { lead: Lead }) {
   return (
     <div className="ws-right">
-      <div className="rp-head"><div className="ic">{Icon.flow}</div><div><div className="nm">Intro — gatekeeper answers</div></div></div>
+      <div className="rp-head"><div className="ic">{Icon.flow}</div><div><div className="nm">Discovery call script</div></div></div>
       <div className="rp-body">
-        <div className="script-step"><div className="sn">01 — HEY, WHAT TIME DO YOU CLOSE?</div>
+
+        <div className="script-step"><div className="sn">01 — CLOSING TIME</div>
           <span className="lbl">Casual open</span>
-          <div className="say">&quot;Hey, what time do you guys close?&quot;</div>
-          <div className="aside">About 8 o&apos;clock — or — We&apos;re open online 24/7.</div></div>
+          <div className="say">&quot;Hi, I was just wondering what time you guys close?&quot;</div>
+          <div className="aside">Let them answer.</div></div>
+
         <div className="script-step"><div className="sn">02 — AFTER-HOURS</div>
-          <div className="say">&quot;And if someone calls {lead.salon} after you close — does it just go to voicemail?&quot;</div></div>
-        <div className="script-step"><div className="sn">03 — THE PITCH</div>
-          <div className="say">&quot;We help salons set up an AI receptionist that answers missed &amp; after-hours calls so you&apos;re not losing booking revenue. Are you the owner?&quot;</div></div>
+          <div className="say">&quot;Got it. So if I call after that… does it go to voicemail, or does someone still pick up?&quot;</div>
+          <div className="aside">Let them answer.</div>
+          <div className="branch"><span className="q">If they ask &ldquo;what is this about?&rdquo;</span>
+            <div className="say">&quot;I was calling to see how you&apos;re currently handling your overflow and after-hours calls.&quot;</div></div>
+        </div>
+
+        <div className="script-step"><div className="sn">03 — THE QUESTION</div>
+          <div className="aside">Match their answer, then land the same question:</div>
+          <div className="branch"><span className="q">&ldquo;They go to voicemail.&rdquo; &nbsp;/&nbsp; &ldquo;I answer them.&rdquo;</span>
+            <div className="say">&quot;I&apos;m not sure if this would be applicable, but… have you considered using a voice agent to help answer those calls? Have you seen the new voice technology out there?&quot;</div></div>
+          <div className="branch"><span className="q">&ldquo;I have someone who answers.&rdquo;</span>
+            <div className="say">&quot;Are you paying this person to be on call?&quot;</div>
+            <div className="say">&quot;…have you considered using a voice agent to help answer those calls? Have you seen the new voice technology out there?&quot;</div></div>
+        </div>
+
+        <div className="script-step ask"><div className="sn">04 — THE ASK · BOOK THE DEMO</div>
+          <div className="say">&quot;My goal isn&apos;t to sell you anything today. I actually put together a quick demo of how this would work for {lead.salon} — could we grab 15 minutes so I can walk you through it and you can hear it live? I&apos;ve got a couple of times open this week.&quot;</div>
+          <div className="aside">Book it on the spot — hit 📅 Book demo up top to lock the time in Calendly.</div></div>
+
       </div>
     </div>
   );
