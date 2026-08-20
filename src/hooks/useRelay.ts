@@ -131,6 +131,13 @@ export function useRelay() {
     return () => { cancelled = true; };
   }, []);
 
+  // Pull Gmail replies into the Inbox whenever it's opened (no-op unless Gmail is
+  // configured). New inbound rows arrive via the realtime messages subscription.
+  useEffect(() => {
+    if (!enabled || view !== 'inbox') return;
+    fetch('/api/email/sync', { method: 'POST' }).catch(() => {});
+  }, [enabled, view]);
+
   // Lazy-load a lead's activities from Supabase the first time it's viewed.
   useEffect(() => {
     if (!enabled || !activeLeadId || loaded.current.has(activeLeadId)) return;
