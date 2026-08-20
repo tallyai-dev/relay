@@ -129,7 +129,7 @@ export async function POST(req: Request) {
         'X-Goog-FieldMask':
           'places.id,places.displayName,places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri,places.formattedAddress,places.regularOpeningHours.weekdayDescriptions',
       },
-      body: JSON.stringify({ textQuery, maxResultCount: 1 }),
+      body: JSON.stringify({ textQuery, maxResultCount: 5 }),
     });
     if (!res.ok) {
       const txt = await res.text();
@@ -137,19 +137,40 @@ export async function POST(req: Request) {
       return Response.json({ found: false, error: 'Lookup failed.' }, { status: 502 });
     }
     const data = await res.json();
-    const p = data?.places?.[0];
-    if (!p) return Response.json({ found: false });
+    const places: any[] = data?.places || [];
+    if (!places.length) return Response.json({ found: false });
+
+    // Places returns the top matches; the first isn't always the best record.
+    // Prefer a close name match that actually HAS a website (a suite/partial
+    // listing often matches the name but carries no site), then phone.
+    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = norm(salon);
+    const p = places
+      .map((pl) => {
+        const nm = norm(pl.displayName?.text || '');
+        let score = 0;
+        if (nm && nm === target) score += 4;
+        else if (nm && (nm.includes(target) || target.includes(nm))) score += 2;
+        if (pl.websiteUri) score += 3;
+        if (pl.nationalPhoneNumber || pl.internationalPhoneNumber) score += 1;
+        return { pl, score };
+      })
+      .sort((a, b) => b.score - a.score)[0].pl;
 
     const website = p.websiteUri ? String(p.websiteUri).replace(/^https?:\/\//, '').replace(/\/$/, '') : undefined;
     // If they have a site, crawl it for the booking platform + an email (best-effort).
     const site = p.websiteUri ? await scanSite(p.websiteUri) : {};
+    // Many salons' "website" IS their booking platform (glossgenius.com,
+    // vagaro.com, booksy.com…). Detect that straight from the URL — no crawl
+    // needed, and it works even when the page is a JS-only stub.
+    const bookingSystem = site.bookingSystem || (p.websiteUri ? detectBooking(p.websiteUri) : undefined);
     return Response.json({
       found: true,
       name: p.displayName?.text || undefined,
       phone: p.nationalPhoneNumber || p.internationalPhoneNumber || undefined,
       website,
       email: site.email,
-      bookingSystem: site.bookingSystem,
+      bookingSystem,
       city: p.formattedAddress ? cityStateFrom(p.formattedAddress) : undefined,
       address: p.formattedAddress || undefined,
       hours: p.regularOpeningHours?.weekdayDescriptions || undefined,
