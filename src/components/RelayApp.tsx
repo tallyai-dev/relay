@@ -953,9 +953,10 @@ function FlowPeekBar({ r, viewing }: { r: R; viewing: Lead }) {
   return (
     <div className="flowbar peek">
       <span className="fb-badge">👀 Viewing {viewing.salon}</span>
-      <span className="fb-what">Your flow is on <b>{cur?.salon || 'the current lead'}</b> — actions here won&apos;t fire until you&apos;re back on it.</span>
+      <span className="fb-what">Your flow is on <b>{cur?.salon || 'the current lead'}</b>. Jump here to work {viewing.salon} now — {cur?.salon || 'it'} resumes right after.</span>
       <div className="fb-actions">
-        <button className="btn primary sm" onClick={() => cur && r.setActiveLeadId(cur.id)}>Return to flow →</button>
+        <button className="btn primary sm" onClick={() => r.workLeadNow(viewing.id)}>Work {viewing.salon} now</button>
+        <button className="btn sm" onClick={() => cur && r.setActiveLeadId(cur.id)}>Back to flow →</button>
       </div>
     </div>
   );

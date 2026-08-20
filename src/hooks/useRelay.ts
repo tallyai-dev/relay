@@ -508,6 +508,22 @@ export function useRelay() {
     advance('next_salon');
   }, [current, addActivity, advance]);
 
+  // Jump the flow to a specific queued lead so the rep can act on it right now.
+  // Moves that lead to the current position (from its first action) and lets the
+  // lead they were on resume immediately after — nothing gets skipped.
+  const workLeadNow = useCallback((leadId: string) => {
+    setActiveLeadId(leadId);
+    setFlow((f) => {
+      const idx = f.queue.findIndex((q) => q.leadId === leadId);
+      if (idx < 0 || idx === f.pos) return { ...f, phase: 'action' };
+      const item = { ...f.queue[idx], step: 0 };
+      const rest = f.queue.filter((_, i) => i !== idx);
+      const insertAt = Math.min(f.pos, rest.length);
+      const queue = [...rest.slice(0, insertAt), item, ...rest.slice(insertAt)];
+      return { ...f, queue, pos: insertAt, phase: 'action' };
+    });
+  }, []);
+
   // ── Cadences ────────────────────────────────────────────────────────────────
   const cadenceById = useCallback((id?: string) => cadences.find((c) => c.id === id), [cadences]);
 
@@ -659,7 +675,7 @@ export function useRelay() {
     view, setView, leads, activities, score, activeLeadId, setActiveLeadId, leadById,
     flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads, importCleanRows,
     me, reps, signOut,
-    startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip,
+    startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow,
     addActivity, setStage,
     messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, sendThreadReply, retrySend, threadKeyForMessage,
     activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
