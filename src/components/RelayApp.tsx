@@ -186,23 +186,25 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
 }
 
 function Rail({ r }: { r: R }) {
-  const btn = (v: R['view'], label: string, path: React.ReactNode) => (
+  const btn = (v: R['view'], label: string, path: React.ReactNode, short?: string) => (
     <button className={r.view === v ? 'on' : ''} title={label} onClick={() => r.setView(v)}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{path}</svg>
+      <span className="rail-lbl">{short || label}</span>
     </button>
   );
   return (
     <nav className="rail">
       <div className="logo">R</div>
-      {btn('dialer', 'Workspace', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />)}
+      {btn('dialer', 'Workspace', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />, 'Dialer')}
       <button className={r.view === 'inbox' ? 'on' : ''} title="Inbox" onClick={() => r.setView('inbox')} style={{ position: 'relative' }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16v16H4z" /><path d="M4 9h5l2 3h2l2-3h5" /></svg>
         {r.unreadCount > 0 && <span className="badge">{r.unreadCount}</span>}
+        <span className="rail-lbl">Inbox</span>
       </button>
-      {btn('leads', 'Pipeline', <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />)}
+      {btn('leads', 'Pipeline', <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />, 'Leads')}
       {btn('staging', 'Staging', <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />)}
       {btn('enrich', 'Enrich', <path d="M13 3l2.3 6.2L22 11.5l-6.7 2.3L13 20l-2.3-6.2L4 11.5l6.7-2.3zM5 3v3M3.5 4.5h3" />)}
-      {btn('cadences', 'Cadences', <path d="M3 12h4l3 8 4-16 3 8h4" />)}
+      {btn('cadences', 'Cadences', <path d="M3 12h4l3 8 4-16 3 8h4" />, 'Cadence')}
       {btn('reports', 'Reports', <path d="M3 3v18h18M8 15v3M13 9v9M18 5v13" />)}
       <div className="spacer" />
       <div className="me" title={r.me?.name || 'You'}>{r.me ? initials(r.me.name) : 'SB'}</div>
@@ -227,9 +229,9 @@ function TopBar({ r, onImport }: { r: R; onImport: () => void }) {
       <div className="grow" />
       {!r.enabled && <span className="demo-flag" title="No Supabase configured — running on local demo data">Demo mode</span>}
       {r.enabled && r.me && <span className="demo-flag" style={{ background: r.me.role === 'admin' ? 'var(--accent-soft)' : '#eef2f8', color: r.me.role === 'admin' ? 'var(--accent-ink)' : 'var(--ink2)' }} title={r.me.email}>{r.me.name} · {r.me.role}</span>}
-      <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
-      <button className="btn flowbtn" onClick={() => r.startFlow()}>{Icon.flow}Flow Mode</button>
-      {r.enabled && <button className="btn" onClick={r.signOut} title="Sign out">Sign out</button>}
+      <button className="btn tb-import" onClick={onImport}>{Icon.import}<span className="lbl">Import leads</span></button>
+      <button className="btn flowbtn" onClick={() => r.startFlow()}>{Icon.flow}<span className="lbl">Flow Mode</span></button>
+      {r.enabled && <button className="btn tb-signout" onClick={r.signOut} title="Sign out"><span className="lbl">Sign out</span></button>}
     </div>
   );
 }
