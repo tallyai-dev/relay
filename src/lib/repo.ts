@@ -80,6 +80,38 @@ export async function fetchLeads(): Promise<Lead[]> {
   return (data || []).map(rowToLead);
 }
 
+export interface DailyStats {
+  dials: number; conversations: number; voicemails: number; texts: number; emails: number; demos: number;
+}
+const EMPTY_STATS: DailyStats = { dials: 0, conversations: 0, voicemails: 0, texts: 0, emails: 0, demos: 0 };
+
+// Roll up today's activity into the top-bar counters. Bounded to today (local
+// midnight) so it naturally resets each day. Derives from real logged
+// activities, so it's accurate and survives reloads.
+export async function fetchTodayStats(): Promise<DailyStats> {
+  const sb = supabaseBrowser();
+  if (!sb) return { ...EMPTY_STATS };
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const { data, error } = await sb
+    .from('activities')
+    .select('kind, disposition, direction')
+    .gte('created_at', start.toISOString());
+  if (error || !data) return { ...EMPTY_STATS };
+  const s: DailyStats = { ...EMPTY_STATS };
+  const talked = new Set(['booked', 'callback', 'not_interested', 'quote']);
+  for (const r of data as any[]) {
+    if (r.kind === 'text' && r.direction === 'out') s.texts++;
+    else if (r.kind === 'email' && r.direction === 'out') s.emails++;
+    else if ((r.kind === 'call' || r.kind === 'book') && r.disposition) {
+      s.dials++; // a dispositioned call attempt = one dial
+      if (r.disposition === 'voicemail') s.voicemails++;
+      if (talked.has(r.disposition)) s.conversations++;
+      if (r.disposition === 'booked') s.demos++;
+    }
+  }
+  return s;
+}
+
 export async function fetchActivities(leadId: string): Promise<Activity[]> {
   const sb = supabaseBrowser();
   if (!sb) return [];

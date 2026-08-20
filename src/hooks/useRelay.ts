@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -56,7 +56,9 @@ export function useRelay() {
   const [view, setView] = useState<View>('leads');
   const [leads, setLeads] = useState<Lead[]>(SEED_LEADS);
   const [activities, setActivities] = useState<Record<string, Activity[]>>(clone(SEED_ACTIVITIES));
-  const [score, setScore] = useState({ calls: 27, texts: 15, emails: 22, demos: 3 });
+  // Daily activity counters shown in the top bar. Demo mode shows plausible
+  // numbers; a real session seeds from today's logged activity (see hydrate).
+  const [stats, setStats] = useState({ dials: 24, conversations: 7, voicemails: 9, texts: 15, emails: 22, demos: 3 });
   const [activeLeadId, setActiveLeadId] = useState<string>('l1');
   const [flow, setFlow] = useState<FlowState>({
     on: false, queue: [], pos: 0, phase: 'action', actionCount: 0,
@@ -91,7 +93,7 @@ export function useRelay() {
       setMe(meRow);
       setReps(repRows);
       if (cadRows.length) setCadences(cadRows);
-      setScore({ calls: 0, texts: 0, emails: 0, demos: 0 }); // real session starts at zero
+      fetchTodayStats().then((t) => { if (alive) setStats(t); }); // seed from today's real activity
     })();
     const unsub = subscribeMessages((m) => {
       setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
@@ -263,7 +265,8 @@ export function useRelay() {
 
   const flowCall = useCallback(() => {
     if (!current) return;
-    setScore((s) => ({ ...s, calls: s.calls + 1 }));
+    // Dials are counted when the call is dispositioned (see applyDispo), so a
+    // ring that's abandoned before an outcome doesn't inflate the count.
     setActiveCall({ leadId: current.leadId, direction: 'out', viaFlow: true });
     setFlow((f) => ({ ...f, actionCount: f.actionCount + 1, phase: 'incall' }));
   }, [current]);
@@ -407,7 +410,7 @@ export function useRelay() {
     if (!current) return;
     const lead = leadById(current.leadId);
     const leadId = current.leadId;
-    setScore((s) => ({ ...s, [channel]: (s as any)[channel] + 1 }));
+    setStats((s) => (channel === 'text' ? { ...s, texts: s.texts + 1 } : { ...s, emails: s.emails + 1 }));
     addActivity(leadId, {
       kind: channel, direction: 'out',
       ty: channel === 'text' ? 'Text sent · ⚡Flow' : 'Email sent · ⚡Flow',
@@ -438,7 +441,14 @@ export function useRelay() {
     const step = current.steps[current.step];
     const action = branchFor(step, key);
     const ai = AI_NOTE[key] || '';
-    if (key === 'booked') setScore((s) => ({ ...s, demos: s.demos + 1 }));
+    // Every dispositioned call is one dial; layer on the outcome buckets.
+    setStats((s) => ({
+      ...s,
+      dials: s.dials + 1,
+      conversations: s.conversations + (key === 'booked' || key === 'callback' || key === 'not_interested' ? 1 : 0),
+      voicemails: s.voicemails + (key === 'voicemail' ? 1 : 0),
+      demos: s.demos + (key === 'booked' ? 1 : 0),
+    }));
     const id = addActivity(current.leadId, {
       kind: key === 'booked' ? 'book' : 'call', direction: 'out', disposition: key as Disposition, ai: true,
       ty: `${DISPO_LABEL[key]} · ⚡Flow`, time: 'Just now', aiNote: ai, body: ai,
@@ -633,7 +643,7 @@ export function useRelay() {
     const lead = matchLeadByNumber(number);
     const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     setRecentDials((prev) => [{ id: uid(), number, kind, body, time, leadId: lead?.id, salon: lead?.salon }, ...prev].slice(0, 40));
-    setScore((s) => ({ ...s, [kind === 'call' ? 'calls' : 'texts']: (s as any)[kind === 'call' ? 'calls' : 'texts'] + 1 }));
+    setStats((s) => (kind === 'call' ? { ...s, dials: s.dials + 1 } : { ...s, texts: s.texts + 1 }));
     if (lead) {
       addActivity(lead.id, {
         kind, direction: 'out',
@@ -672,7 +682,7 @@ export function useRelay() {
   }, [enabled, me]);
 
   return {
-    view, setView, leads, activities, score, activeLeadId, setActiveLeadId, leadById,
+    view, setView, leads, activities, stats, activeLeadId, setActiveLeadId, leadById,
     flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads, importCleanRows,
     me, reps, signOut,
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow,

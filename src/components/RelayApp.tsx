@@ -211,15 +211,18 @@ function Rail({ r }: { r: R }) {
 }
 
 function TopBar({ r, onImport }: { r: R; onImport: () => void }) {
-  const { score } = r;
+  const s = r.stats;
   return (
     <div className="topbar">
       <div><div className="title">{r.view === 'dialer' ? 'Dialer session' : r.view[0].toUpperCase() + r.view.slice(1)}</div></div>
       <div className="metrics">
-        <div className="metric"><span>Calls</span><b>{score.calls}</b><span className="bar"><i style={{ width: '68%' }} /></span></div>
-        <div className="metric"><span>Texts</span><b>{score.texts}</b><span className="bar"><i style={{ width: '44%' }} /></span></div>
-        <div className="metric"><span>Emails</span><b>{score.emails}</b><span className="bar"><i style={{ width: '55%' }} /></span></div>
-        <div className="metric goal"><span>Demos</span><b>{score.demos}</b><span className="g">/10 today</span></div>
+        <span className="metrics-day" title="Counts reset at midnight">Today</span>
+        <div className="metric"><span>Dials</span><b>{s.dials}</b></div>
+        <div className="metric" title="Calls where you reached a person"><span>Convos</span><b>{s.conversations}</b></div>
+        <div className="metric"><span>Voicemails</span><b>{s.voicemails}</b></div>
+        <div className="metric"><span>Texts</span><b>{s.texts}</b></div>
+        <div className="metric"><span>Emails</span><b>{s.emails}</b></div>
+        <div className="metric goal"><span>Demos</span><b>{s.demos}</b><span className="g">/10</span></div>
       </div>
       <div className="grow" />
       {!r.enabled && <span className="demo-flag" title="No Supabase configured — running on local demo data">Demo mode</span>}
