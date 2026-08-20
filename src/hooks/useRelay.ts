@@ -166,6 +166,23 @@ export function useRelay() {
     if (enabled) updateStage(leadId, stage);
   }, [enabled]);
 
+  // Pull a salon out of the cadence (not interested). Marks it Cold so it drops
+  // out of the flow + due list, logs a note, and if we're on it in a live flow,
+  // moves to the next salon.
+  const removeFromCadence = useCallback((leadId: string) => {
+    setStage(leadId, 'cold');
+    addActivity(leadId, { kind: 'note', ty: 'Removed from cadence', time: 'Just now', body: 'Not interested — removed from the cadence.' });
+    setFlow((f) => {
+      if (f.on && f.queue[f.pos]?.leadId === leadId) {
+        const pos = f.pos + 1;
+        const nextItem = f.queue[pos];
+        if (nextItem) setActiveLeadId(nextItem.leadId);
+        return { ...f, pos, phase: 'action', pendingAdvance: null };
+      }
+      return f;
+    });
+  }, [setStage, addActivity]);
+
   // CSV import → Supabase bulk insert (or append locally in demo mode).
   const importLeads = useCallback(async (csv: string, ownerRepId?: string): Promise<number> => {
     const rows = mapToImportRows(csv);
@@ -215,7 +232,7 @@ export function useRelay() {
   const startFlow = useCallback(async (onlyIds?: string[]) => {
     const idSet = onlyIds ? new Set(onlyIds) : null;
     const book = leadsRef.current
-      .filter((l) => l.deployed !== false && l.stage !== 'won' && !l.cadenceCompletedAt) // skip staged + already-completed
+      .filter((l) => l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && !l.cadenceCompletedAt) // skip staged, closed, removed, completed
       .filter((l) => !idSet || idSet.has(l.id));
     if (!book.length) return; // nothing to work
 
@@ -728,6 +745,6 @@ export function useRelay() {
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead,
     stagedLeads, activeLeads, deployLeads,
-    enrichableLeads, enrichLead, saveEnrichment, deleteLead,
+    enrichableLeads, enrichLead, saveEnrichment, deleteLead, removeFromCadence,
   };
 }

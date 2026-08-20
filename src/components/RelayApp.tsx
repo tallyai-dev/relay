@@ -803,6 +803,39 @@ function QuickEmail({ lead }: { lead: Lead }) {
   );
 }
 
+// Per-salon touch tally + a way to pull the salon out of the cadence.
+function TouchStrip({ r, lead, acts }: { r: R; lead: Lead; acts: Activity[] }) {
+  const calls = acts.filter((a) => (a.kind === 'call' || a.kind === 'book') && a.direction !== 'in').length;
+  const texts = acts.filter((a) => a.kind === 'text' && a.direction !== 'in').length;
+  const emails = acts.filter((a) => a.kind === 'email' && a.direction !== 'in').length;
+  const demos = acts.filter((a) => a.kind === 'book' || a.disposition === 'booked').length;
+  const removed = lead.stage === 'cold';
+  return (
+    <div className="touch-strip">
+      <div className="ts-counts">
+        <span className="ts">{Icon.call}<b>{calls}</b> {calls === 1 ? 'call' : 'calls'}</span>
+        <span className="ts">{Icon.text}<b>{texts}</b> {texts === 1 ? 'text' : 'texts'}</span>
+        <span className="ts">{Icon.email}<b>{emails}</b> {emails === 1 ? 'email' : 'emails'}</span>
+        <span className="ts ts-demo">🎉 <b>{demos}</b> {demos === 1 ? 'demo' : 'demos'}</span>
+      </div>
+      {removed
+        ? <span className="ts-removed">⊘ Removed from cadence</span>
+        : <RemoveFromCadence r={r} leadId={lead.id} />}
+    </div>
+  );
+}
+
+function RemoveFromCadence({ r, leadId }: { r: R; leadId: string }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 3500); return () => clearTimeout(t); }, [armed]);
+  const onClick = (e: React.MouseEvent) => { e.stopPropagation(); if (!armed) { setArmed(true); return; } r.removeFromCadence(leadId); };
+  return (
+    <button className={`btn sm danger${armed ? ' armed' : ''}`} onClick={onClick} title="Mark not interested and stop the cadence for this salon">
+      {armed ? 'Confirm — not interested?' : '⊘ Remove from cadence'}
+    </button>
+  );
+}
+
 function Dialer({ r }: { r: R }) {
   const lead = r.leadById(r.activeLeadId);
   if (!lead) return null;
@@ -882,6 +915,8 @@ function Dialer({ r }: { r: R }) {
             <div className="qc"><div className="qk">City</div><div className="qv">{lead.city || <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Last touch</div><div className="qv">{lead.lastTouch}</div></div>
           </div>
+
+          <TouchStrip r={r} lead={lead} acts={acts} />
 
           <div className="block" style={{ marginTop: 14 }}>
             <div className="bh"><div className="bt">Activity · {acts.length}</div></div>
