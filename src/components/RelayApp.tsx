@@ -267,6 +267,20 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || needsEnrich;
   const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setNeedsEnrich(false); };
 
+  // Bulk selection → assign many leads to a cadence at once.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [bulkCad, setBulkCad] = useState('');
+  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
+  const toggleAll = () => setSelected((prev) => {
+    const next = new Set(prev);
+    if (allSelected) filtered.forEach((l) => next.delete(l.id));
+    else filtered.forEach((l) => next.add(l.id));
+    return next;
+  });
+  const toggleOne = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const clearSel = () => setSelected(new Set());
+  const doBulkAssign = () => { if (!bulkCad || !selected.size) return; r.assignCadenceMany([...selected], bulkCad); clearSel(); setBulkCad(''); };
+
   return (
     <section className="view on">
       <div className="page-head">
@@ -305,12 +319,29 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
         <span className="lf-count">{filtered.length} of {r.activeLeads.length}</span>
       </div>
 
+      {selected.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-n">{selected.size} selected</span>
+          <select value={bulkCad} onChange={(e) => setBulkCad(e.target.value)}>
+            <option value="">Assign to cadence…</option>
+            {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button className="btn sm primary" disabled={!bulkCad} onClick={doBulkAssign}>Assign {selected.size} {selected.size === 1 ? 'lead' : 'leads'}</button>
+          <button className="btn sm" onClick={clearSel}>Clear selection</button>
+          <span className="bulk-hint">Reassigning starts them fresh at day 0 of the new cadence, due now.</span>
+        </div>
+      )}
+
       <div className="table">
         <table>
-          <thead><tr><th>Salon</th><th>Owner / contact</th><th>Next step</th><th>Last touch</th><th>Stage</th><th /></tr></thead>
+          <thead><tr>
+            <th className="ck"><input type="checkbox" checked={allSelected} onChange={toggleAll} title="Select all matching" /></th>
+            <th>Salon</th><th>Owner / contact</th><th>Next step</th><th>Last touch</th><th>Stage</th><th />
+          </tr></thead>
           <tbody>
             {filtered.map((l, i) => (
-              <tr key={l.id} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
+              <tr key={l.id} className={selected.has(l.id) ? 'row-sel' : ''} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
+                <td className="ck" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} /></td>
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
                   <div><div className="nm">{l.salon}{l.cadenceCompletedAt && <span className="row-done" title={`Completed ${l.cadenceCompletedName || 'cadence'} · ${fmtDate(l.cadenceCompletedAt)}`}>✓ Done</span>}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
                 <td>{l.contact?.name === '—' ? <span className="muted">No name yet</span> : <div><div style={{ fontWeight: 600 }}>{l.contact?.name}</div><div className="loc">{l.contact?.role}</div></div>}</td>

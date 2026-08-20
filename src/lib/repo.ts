@@ -368,6 +368,21 @@ export async function assignLeadCadence(leadId: string, cadenceId: string): Prom
   await sb.from('leads').update({ cadence_id: cadenceId, cadence_pos: 0, cadence_completed_at: null, cadence_completed_name: null }).eq('id', leadId);
 }
 
+// Move many leads onto a cadence at once: fresh at day 0, due now, badge cleared.
+// Chunked so a whole book (thousands) updates without hitting URL limits.
+export async function bulkAssignCadence(leadIds: string[], cadenceId: string): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb || !leadIds.length) return;
+  const CHUNK = 200;
+  for (let i = 0; i < leadIds.length; i += CHUNK) {
+    const batch = leadIds.slice(i, i + CHUNK);
+    const { error } = await sb.from('leads')
+      .update({ cadence_id: cadenceId, cadence_pos: 0, cadence_completed_at: null, cadence_completed_name: null, next_action_at: null })
+      .in('id', batch);
+    if (error) console.error('bulkAssignCadence', error);
+  }
+}
+
 // Stamp a lead as having finished its cadence (badge on the salon view).
 export async function markCadenceComplete(leadId: string, name: string, iso: string): Promise<void> {
   const sb = supabaseBrowser();
