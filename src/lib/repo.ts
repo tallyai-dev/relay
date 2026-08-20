@@ -112,6 +112,33 @@ export async function fetchTodayStats(): Promise<DailyStats> {
   return s;
 }
 
+// How many cadence touches (outbound calls/texts/emails) each lead already has —
+// so the flow can resume a salon where it left off instead of restarting at
+// attempt 1. Chunked to stay under URL length limits on big books.
+export async function fetchCadenceProgress(leadIds: string[]): Promise<Record<string, number>> {
+  const sb = supabaseBrowser();
+  if (!sb || !leadIds.length) return {};
+  const out: Record<string, number> = {};
+  const CHUNK = 50;
+  for (let i = 0; i < leadIds.length; i += CHUNK) {
+    const batch = leadIds.slice(i, i + CHUNK);
+    const { data, error } = await sb.from('activities').select('lead_id, kind, direction').in('lead_id', batch);
+    if (error || !data) continue;
+    for (const r of data as any[]) {
+      if ((r.kind === 'call' || r.kind === 'book' || r.kind === 'text' || r.kind === 'email') && r.direction !== 'in') {
+        out[r.lead_id] = (out[r.lead_id] || 0) + 1;
+      }
+    }
+  }
+  return out;
+}
+
+export async function updateCadencePos(leadId: string, pos: number): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('leads').update({ cadence_pos: pos }).eq('id', leadId);
+}
+
 export async function fetchActivities(leadId: string): Promise<Activity[]> {
   const sb = supabaseBrowser();
   if (!sb) return [];

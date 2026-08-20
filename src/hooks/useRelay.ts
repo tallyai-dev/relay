@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -76,6 +76,8 @@ export function useRelay() {
   leadsRef.current = leads;
   const cadencesRef = useRef<Cadence[]>(cadences);
   cadencesRef.current = cadences;
+  const activitiesRef = useRef<Record<string, Activity[]>>(activities);
+  activitiesRef.current = activities;
 
   const enabled = repoEnabled(); // Supabase-backed vs in-memory demo
   const loaded = useRef<Set<string>>(new Set());
@@ -210,25 +212,48 @@ export function useRelay() {
 
   // ── Flow control ───────────────────────────────────────────────────────────
   // Build the session queue from the rep's current book (RLS already scoped it).
-  const startFlow = useCallback((onlyIds?: string[]) => {
+  const startFlow = useCallback(async (onlyIds?: string[]) => {
     const idSet = onlyIds ? new Set(onlyIds) : null;
-    const queue: QueueItem[] = leadsRef.current
+    const book = leadsRef.current
       .filter((l) => l.deployed !== false && l.stage !== 'won') // staged leads aren't worked
-      .filter((l) => !idSet || idSet.has(l.id))
-      .map((l) => {
-        // Run the lead's assigned cadence (its call/text/email steps, skipping waits);
-        // fall back to the stage-based default plan when no cadence is set. `steps`
-        // stays aligned with `plan` so each call can read its branch rules.
-        const cad = cadencesRef.current.find((c) => c.id === l.cadenceId);
-        const actionable = (cad?.steps || []).filter((s) => s.channel !== 'wait');
-        if (actionable.length) return { leadId: l.id, plan: actionable.map((s) => s.channel as Channel), steps: actionable, step: 0 };
-        return { leadId: l.id, plan: planForStage(l.stage), steps: [], step: 0 };
-      });
-    if (!queue.length) return; // nothing to work
+      .filter((l) => !idSet || idSet.has(l.id));
+    if (!book.length) return; // nothing to work
+
+    // How far each salon already is in its cadence, from real logged touches, so
+    // the flow resumes instead of restarting at attempt 1. Real mode queries the
+    // DB; demo mode counts the activities already in memory.
+    let progress: Record<string, number> = {};
+    if (enabled) {
+      progress = await fetchCadenceProgress(book.map((l) => l.id));
+    } else {
+      for (const l of book) {
+        progress[l.id] = (activitiesRef.current[l.id] || []).filter(
+          (a) => (a.kind === 'call' || a.kind === 'book' || a.kind === 'text' || a.kind === 'email') && a.direction !== 'in'
+        ).length;
+      }
+    }
+
+    const resumeStep: Record<string, number> = {};
+    const queue: QueueItem[] = book.map((l) => {
+      // Run the lead's assigned cadence (its call/text/email steps, skipping waits);
+      // fall back to the stage-based default plan when no cadence is set. `steps`
+      // stays aligned with `plan` so each call can read its branch rules.
+      const cad = cadencesRef.current.find((c) => c.id === l.cadenceId);
+      const actionable = (cad?.steps || []).filter((s) => s.channel !== 'wait');
+      const plan = actionable.length ? actionable.map((s) => s.channel as Channel) : planForStage(l.stage);
+      const steps = actionable.length ? actionable : [];
+      const done = progress[l.id] ?? l.cadencePos ?? 0;
+      const step = Math.min(done, Math.max(0, plan.length - 1)); // resume where the touches left off
+      resumeStep[l.id] = step;
+      return { leadId: l.id, plan, steps, step };
+    });
+
+    // Reflect the resume point in the queue rail ("X/5") too.
+    setLeads((prev) => prev.map((l) => (resumeStep[l.id] != null ? { ...l, cadencePos: resumeStep[l.id] } : l)));
     setFlow({ on: true, queue, pos: 0, phase: 'action', actionCount: 0, pendingAdvance: null, noteActivityId: null, noteAiText: null, paused: false });
     setActiveLeadId(queue[0].leadId);
     setView('dialer');
-  }, []);
+  }, [enabled]);
   const signOut = useCallback(() => { repoSignOut(); }, []);
 
   const exitFlow = useCallback(() => {
@@ -245,16 +270,20 @@ export function useRelay() {
           const q = f.queue.slice();
           q[f.pos] = { ...item, step };
           setActiveLeadId(item.leadId);
+          // Remember how far this salon has progressed (rail + durable).
+          setLeads((prev) => prev.map((l) => (l.id === item.leadId ? { ...l, cadencePos: step } : l)));
+          if (enabled) updateCadencePos(item.leadId, step);
           return { ...f, queue: q, phase: 'action' };
         }
         // fall through to next salon
       }
       const pos = f.pos + 1;
       const nextItem = f.queue[pos];
-      if (nextItem) { nextItem.step = 0; setActiveLeadId(nextItem.leadId); }
+      // Keep the next salon's resume step (set at flow start) — don't reset to 0.
+      if (nextItem) { setActiveLeadId(nextItem.leadId); }
       return { ...f, pos, phase: 'action', pendingAdvance: null };
     });
-  }, []);
+  }, [enabled]);
 
   const current = flow.queue[flow.pos];
   const currentLead = current ? leadById(current.leadId) : undefined;
