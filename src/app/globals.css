@@ -137,8 +137,10 @@
   .team-invite .ti-link{display:flex;gap:7px}
   .team-invite .ti-link input{flex:1;font-size:12px;padding:7px 9px;border:1px solid var(--greenbd);border-radius:7px;background:#fff;color:var(--ink2)}
   .team-list{display:flex;flex-direction:column;gap:9px;max-width:900px}
-  .team-row{display:flex;align-items:center;gap:13px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 15px}
-  .team-row.inactive{opacity:.55}
+  .team-card{background:#fff;border:1px solid var(--line);border-radius:12px}
+  .team-card.inactive{opacity:.55}
+  .team-row{display:flex;align-items:center;gap:13px;padding:12px 15px}
+  .team-invite.in-row{margin:0 12px 12px}
   .team-av{flex:none;width:38px;height:38px;font-size:13px;background:linear-gradient(135deg,#0a7d3a,#12b76a);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;border-radius:10px}
   .team-main{flex:1;min-width:0}
   .team-main .nm{font-size:14px;font-weight:700;display:flex;align-items:center;gap:7px}
@@ -669,7 +671,10 @@
   justify-content:center;font-weight:800;font-size:19px}
 .auth-sub{margin:0;color:var(--ink3);font-size:13px}
 .auth-card label{font-size:12px;font-weight:600;color:var(--ink2);display:flex;flex-direction:column;gap:5px}
-.auth-card input{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13px;font-family:inherit}
+.auth-card input{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13px;font-family:inherit;width:100%}
+.auth-card .pw-wrap{position:relative;display:flex;align-items:center}
+.auth-card .pw-wrap input{padding-right:56px}
+.pw-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--accent-ink,#0a7d3a);font-size:11.5px;font-weight:700;cursor:pointer;padding:4px 6px}
 .auth-card .btn{justify-content:center;padding:10px}
 .auth-toggle{border:none;background:none;color:var(--accent-ink);font-size:12px;font-weight:600;cursor:pointer}
 .auth-err{background:var(--red-soft);color:var(--red);border-radius:8px;padding:8px 10px;font-size:12px}

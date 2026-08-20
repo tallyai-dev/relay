@@ -623,8 +623,19 @@ function TeamView({ r }: { r: R }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
+  const [reset, setReset] = useState<{ id: string; link: string } | null>(null);
+  const [resetBusy, setResetBusy] = useState('');
 
   useEffect(() => { r.loadTeam(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doReset = async (rp: { id: string; email?: string }) => {
+    if (!rp.email) return;
+    setResetBusy(rp.id); setReset(null); setErr('');
+    const res = await r.resetRepPassword(rp.email);
+    setResetBusy('');
+    if (!res.ok) { setErr(res.error || 'Could not create a reset link.'); return; }
+    setReset({ id: rp.id, link: res.inviteLink || '' });
+  };
 
   const add = async () => {
     setErr(''); setInvite(null);
@@ -663,24 +674,36 @@ function TeamView({ r }: { r: R }) {
 
       <div className="team-list">
         {r.reps.map((rp) => (
-          <div key={rp.id} className={`team-row ${rp.active === false ? 'inactive' : ''}`}>
-            <div className="avatar ai team-av">{initials(rp.name)}</div>
-            <div className="team-main">
-              <div className="nm">{rp.name}{rp.id === r.me?.id && <span className="ti-you">you</span>}<span className={`role-badge ${rp.role}`}>{rp.role}</span></div>
-              <div className="mt">{rp.email}</div>
+          <div key={rp.id} className={`team-card ${rp.active === false ? 'inactive' : ''}`}>
+            <div className="team-row">
+              <div className="avatar ai team-av">{initials(rp.name)}</div>
+              <div className="team-main">
+                <div className="nm">{rp.name}{rp.id === r.me?.id && <span className="ti-you">you</span>}<span className={`role-badge ${rp.role}`}>{rp.role}</span></div>
+                <div className="mt">{rp.email}</div>
+              </div>
+              <label className="team-num">Number
+                <input defaultValue={rp.phoneNumber || ''} placeholder="+1…" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (rp.phoneNumber || '')) r.updateRep(rp.id, { phoneNumber: v }); }} />
+              </label>
+              <div className="team-leads"><b>{r.repLeadCounts[rp.id] || 0}</b><span>leads</span></div>
+              <div className="team-actions">
+                <button className="btn sm" disabled={resetBusy === rp.id} onClick={() => doReset(rp)}>{resetBusy === rp.id ? 'Linking…' : 'Reset password'}</button>
+                {rp.id !== r.me?.id && (
+                  <>
+                    <button className="btn sm" onClick={() => r.updateRep(rp.id, { role: rp.role === 'admin' ? 'rep' : 'admin' })}>{rp.role === 'admin' ? 'Make rep' : 'Make admin'}</button>
+                    <button className="btn sm" onClick={() => r.updateRep(rp.id, { active: rp.active === false })}>{rp.active === false ? 'Reactivate' : 'Deactivate'}</button>
+                  </>
+                )}
+              </div>
             </div>
-            <label className="team-num">Number
-              <input defaultValue={rp.phoneNumber || ''} placeholder="+1…" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (rp.phoneNumber || '')) r.updateRep(rp.id, { phoneNumber: v }); }} />
-            </label>
-            <div className="team-leads"><b>{r.repLeadCounts[rp.id] || 0}</b><span>leads</span></div>
-            <div className="team-actions">
-              {rp.id !== r.me?.id && (
-                <>
-                  <button className="btn sm" onClick={() => r.updateRep(rp.id, { role: rp.role === 'admin' ? 'rep' : 'admin' })}>{rp.role === 'admin' ? 'Make rep' : 'Make admin'}</button>
-                  <button className="btn sm" onClick={() => r.updateRep(rp.id, { active: rp.active === false })}>{rp.active === false ? 'Reactivate' : 'Deactivate'}</button>
-                </>
-              )}
-            </div>
+            {reset?.id === rp.id && (
+              <div className="team-invite in-row">
+                <div className="ti-head">Send <b>{rp.name}</b> this link to reset their password:</div>
+                <div className="ti-link">
+                  <input readOnly value={reset.link} onFocus={(e) => e.currentTarget.select()} />
+                  <button className="btn sm" onClick={() => navigator.clipboard?.writeText(reset.link)}>Copy</button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>

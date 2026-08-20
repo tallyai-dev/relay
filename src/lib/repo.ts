@@ -70,27 +70,36 @@ export async function assignOwnerMany(leadIds: string[], ownerRepId: string | nu
   }
 }
 
-// Invite a new SDR: create the auth login (server, service role) and get back a
-// set-password link to hand them. Passes the caller's access token so the
-// endpoint can verify the requester is an admin.
-export async function inviteRep(email: string, name: string, phoneNumber?: string): Promise<{ ok: boolean; inviteLink?: string; error?: string }> {
+// Post to an admin team endpoint with the caller's access token attached.
+async function adminTeamPost(path: string, payload: any): Promise<{ ok: boolean; inviteLink?: string; error?: string }> {
   const sb = supabaseBrowser();
   if (!sb) return { ok: false, error: 'Not connected.' };
   const { data: sess } = await sb.auth.getSession();
   const token = sess.session?.access_token;
   if (!token) return { ok: false, error: 'Not signed in.' };
   try {
-    const res = await fetch('/api/team/create', {
+    const res = await fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ email, name, phoneNumber }),
+      body: JSON.stringify(payload),
     });
     const j = await res.json();
-    if (!res.ok) return { ok: false, error: j.error || 'Could not create user.' };
+    if (!res.ok) return { ok: false, error: j.error || 'Request failed.' };
     return { ok: true, inviteLink: j.inviteLink };
   } catch (e: any) {
     return { ok: false, error: String(e) };
   }
+}
+
+// Invite a new SDR: create the auth login (server, service role) and get back a
+// set-password link to hand them.
+export async function inviteRep(email: string, name: string, phoneNumber?: string) {
+  return adminTeamPost('/api/team/create', { email, name, phoneNumber });
+}
+
+// Generate a fresh set-password link for an existing user (reset / expired invite).
+export async function resetRepPassword(email: string) {
+  return adminTeamPost('/api/team/reset', { email });
 }
 
 export async function signOut(): Promise<void> {

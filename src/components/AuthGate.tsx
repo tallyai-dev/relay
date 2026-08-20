@@ -10,6 +10,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [showPw, setShowPw] = useState(false);
   const [recovering, setRecovering] = useState(false); // arrived via a set-password link
   const [notice, setNotice] = useState('');
   const [err, setErr] = useState('');
@@ -60,7 +61,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           <div className="auth-logo">R</div>
           <h1>Set your password</h1>
           <p className="auth-sub">Choose a password to finish setting up your Relay account.</p>
-          <label>New password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+          <label>New password
+            <div className="pw-wrap">
+              <input type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <button type="button" className="pw-eye" tabIndex={-1} onClick={() => setShowPw((v) => !v)}>{showPw ? 'Hide' : 'Show'}</button>
+            </div>
+          </label>
           {err && <div className="auth-err">{err}</div>}
           <button className="btn primary" type="submit">Save password</button>
         </form>
@@ -75,7 +81,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         <h1>Relay</h1>
         <p className="auth-sub">{mode === 'signin' ? 'Sign in to your book' : 'Create your account'}</p>
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+        <label>Password
+          <div className="pw-wrap">
+            <input type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <button type="button" className="pw-eye" tabIndex={-1} onClick={() => setShowPw((v) => !v)}>{showPw ? 'Hide' : 'Show'}</button>
+          </div>
+        </label>
         {notice && <div className="auth-note">{notice}</div>}
         {err && <div className="auth-err">{err}</div>}
         <button className="btn primary" type="submit">{mode === 'signin' ? 'Sign in' : 'Sign up'}</button>

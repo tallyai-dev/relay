@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -723,6 +723,12 @@ export function useRelay() {
     return r;
   }, [enabled, loadTeam]);
 
+  // Generate a fresh set-password link for an existing rep.
+  const resetRepPassword = useCallback(async (email: string) => {
+    if (!enabled) return { ok: false, error: 'Connect Supabase first.' };
+    return resetRepPasswordRepo(email);
+  }, [enabled]);
+
   // Edit a rep (number, role, active, name) with optimistic local update.
   const updateRep = useCallback((repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean }) => {
     setReps((prev) => prev.map((rp) => (rp.id === repId ? { ...rp, ...patch } : rp)));
@@ -875,7 +881,7 @@ export function useRelay() {
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
-    isAdmin, repLeadCounts, loadTeam, inviteRep, updateRep, assignOwnerMany,
+    isAdmin, repLeadCounts, loadTeam, inviteRep, resetRepPassword, updateRep, assignOwnerMany,
     stagedLeads, activeLeads, deployLeads,
     enrichableLeads, enrichLead, saveEnrichment, deleteLead, removeFromCadence,
   };
