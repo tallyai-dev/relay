@@ -241,6 +241,25 @@ export async function fetchActivities(leadId: string): Promise<Activity[]> {
   return (data || []).map(rowToActivity);
 }
 
+// Friendly timeline label for a persisted activity (the fancy "· ⚡Flow" labels
+// only live in-session; a reloaded row rebuilds a readable one from its fields).
+const DISPO_TY: Record<string, string> = {
+  booked: 'Demo booked', callback: 'Callback scheduled', not_interested: 'Not interested',
+  voicemail: 'Voicemail left', no_answer: 'Call — no answer', connected: 'Call — connected',
+  quote: 'Quote', wrong_number: 'Wrong number',
+};
+function activityTy(r: any): string {
+  const inbound = r.direction === 'in';
+  switch (r.kind) {
+    case 'call': return (r.disposition && DISPO_TY[r.disposition]) || (inbound ? 'Inbound call' : 'Call');
+    case 'book': return 'Demo booked';
+    case 'email': return inbound ? 'Email received' : 'Email sent';
+    case 'text': return inbound ? 'Text received' : 'Text sent';
+    case 'quote': return 'Quote sent';
+    case 'note': return 'Note';
+    default: return r.kind || 'Activity';
+  }
+}
 function rowToActivity(r: any): Activity {
   return {
     id: r.id,
@@ -248,7 +267,7 @@ function rowToActivity(r: any): Activity {
     kind: r.kind,
     direction: r.direction || undefined,
     disposition: r.disposition || undefined,
-    ty: r.kind,
+    ty: activityTy(r),
     time: new Date(r.created_at).toLocaleString(),
     ai: !!r.ai_note,
     aiNote: r.ai_note || undefined,
@@ -275,11 +294,11 @@ export function subscribeActivities(leadId: string, onChange: (a: Activity) => v
 
 export async function insertActivity(
   leadId: string,
-  a: { kind: string; direction?: string; disposition?: string; aiNote?: string; ownNote?: string; body?: string }
+  a: { id?: string; kind: string; direction?: string; disposition?: string; aiNote?: string; ownNote?: string; body?: string }
 ): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
-  const { error } = await sb.from('activities').insert({
+  const row: any = {
     lead_id: leadId,
     kind: a.kind,
     direction: a.direction,
@@ -287,7 +306,9 @@ export async function insertActivity(
     ai_note: a.aiNote,
     own_note: a.ownNote,
     body: a.body,
-  });
+  };
+  if (a.id) row.id = a.id; // share the client id so realtime echoes de-duplicate
+  const { error } = await sb.from('activities').insert(row);
   if (error) console.error('insertActivity', error);
 }
 

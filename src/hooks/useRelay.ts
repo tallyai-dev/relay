@@ -41,7 +41,12 @@ interface FlowState {
 }
 interface ActiveCall { leadId: string; direction: 'out' | 'in'; viaFlow: boolean; incomingCall?: any }
 
-const uid = () => 'x' + Math.random().toString(36).slice(2, 9);
+// A real UUID so an optimistic activity and its Supabase row can share one id —
+// that's what lets the realtime echo (and the recording's later UPDATE) merge
+// into the row we already show instead of prepending a duplicate.
+const uid = () => (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
+  ? (crypto as any).randomUUID()
+  : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { const r = (Math.random() * 16) | 0; return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16); });
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 const last10 = (p?: string) => (p || '').replace(/\D/g, '').slice(-10);
 
@@ -172,7 +177,20 @@ export function useRelay() {
       setActivities((prev) => {
         const list = prev[activeLeadId] || [];
         const i = list.findIndex((x) => x.id === a.id);
-        const next = i >= 0 ? list.map((x) => (x.id === a.id ? { ...x, ...a } : x)) : [a, ...list];
+        if (i < 0) return { ...prev, [activeLeadId]: [a, ...list] };
+        // We already have this row (our own optimistic copy, or an earlier
+        // version). Keep the friendly optimistic display, but pull in anything
+        // the server added — most importantly the recording, transcript, and the
+        // real AI summary that the /api/voice/recording webhook attaches later.
+        const next = list.map((x) => (x.id === a.id ? {
+          ...a, ...x,
+          recordingUrl: a.recordingUrl ?? x.recordingUrl,
+          transcript: a.transcript ?? x.transcript,
+          durationS: a.durationS ?? x.durationS,
+          aiNote: a.aiNote ?? x.aiNote,
+          disposition: x.disposition ?? a.disposition,
+          ai: !!(a.ai || x.ai),
+        } : x));
         return { ...prev, [activeLeadId]: next };
       });
     });
@@ -190,6 +208,7 @@ export function useRelay() {
     });
     if (enabled) {
       insertActivity(leadId, {
+        id, // share the id so the realtime echo merges instead of duplicating
         kind: a.kind, direction: a.direction, disposition: a.disposition,
         aiNote: a.aiNote, ownNote: a.ownNote, body: a.body,
       });

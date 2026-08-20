@@ -99,7 +99,7 @@ export async function POST(req: Request) {
   const { data: recent } = await db
     .from('activities')
     .select('id, disposition')
-    .eq('lead_id', leadId).eq('kind', 'call').is('recording_url', null)
+    .eq('lead_id', leadId).in('kind', ['call', 'book']).is('recording_url', null)
     .gte('created_at', since)
     .order('created_at', { ascending: false })
     .limit(1).maybeSingle();
