@@ -1104,7 +1104,8 @@ function Dialer({ r }: { r: R }) {
         <div className="ws-list">
           <div className="lh"><span>Session queue</span>{!inFlow && <em className="lh-ct">{r.dueLeads.length} due today</em>}</div>
           {(inFlow ? r.flow.queue.map((q) => q.leadId) : (r.dueLeads.length ? r.dueLeads : r.activeLeads).map((l) => l.id)).map((id) => {
-            const l = r.leadById(id)!; const li = r.leads.findIndex((x) => x.id === id);
+            const l = r.leadById(id); if (!l) return null; // deleted mid-flow — skip, never crash
+            const li = r.leads.findIndex((x) => x.id === id);
             const done = inFlow && r.flow.queue.findIndex((q) => q.leadId === id) < r.flow.pos;
             const warm = r.warmLeadIds.has(id);
             return (

@@ -50,7 +50,6 @@ const uid = () => (typeof crypto !== 'undefined' && (crypto as any).randomUUID)
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 const last10 = (p?: string) => (p || '').replace(/\D/g, '').slice(-10);
 
-const DAY_MS = 864e5;
 const endOfToday = () => { const d = new Date(); d.setHours(23, 59, 59, 999); return d.getTime(); };
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
 // Advance `n` business days (Mon–Fri), landing at the start of that day. Used to
@@ -231,8 +230,10 @@ export function useRelay() {
       if (f.on && f.queue[f.pos]?.leadId === leadId) {
         const pos = f.pos + 1;
         const nextItem = f.queue[pos];
-        if (nextItem) setActiveLeadId(nextItem.leadId);
-        return { ...f, pos, phase: 'action', pendingAdvance: null };
+        if (nextItem) { setActiveLeadId(nextItem.leadId); return { ...f, pos, phase: 'action', pendingAdvance: null }; }
+        // That was the last salon of the day → show the day-cleared screen
+        // instead of leaving the flow stranded past the end of the queue.
+        return { ...f, pos, phase: 'action', pendingAdvance: null, done: true };
       }
       return f;
     });
@@ -625,7 +626,9 @@ export function useRelay() {
       return;
     }
     if (action.type === 'wait') {
-      const iso = new Date(Date.now() + action.days * DAY_MS).toISOString();
+      // Business days (M–F), matching the rest of the scheduler — a Friday
+      // "snooze 2 days" lands Tuesday, not Sunday.
+      const iso = addBusinessDays(new Date(), action.days).toISOString();
       setLeads((prev) => prev.map((l) => (l.id === current.leadId ? { ...l, nextActionAt: iso } : l)));
       if (enabled) setLeadNextAction(current.leadId, iso);
       addActivity(current.leadId, { kind: 'note', ty: `Snoozed ${action.days} day${action.days === 1 ? '' : 's'} · ⚡Flow`, time: 'Just now', body: `Re-touch this salon in ${action.days} day${action.days === 1 ? '' : 's'}.` });
@@ -677,7 +680,7 @@ export function useRelay() {
     setFlow((f) => {
       const idx = f.queue.findIndex((q) => q.leadId === leadId);
       if (idx < 0 || idx === f.pos) return { ...f, phase: 'action' };
-      const item = { ...f.queue[idx], step: 0 };
+      const item = { ...f.queue[idx] }; // keep its resume step — don't restart the cadence at attempt 1
       const rest = f.queue.filter((_, i) => i !== idx);
       const insertAt = Math.min(f.pos, rest.length);
       const queue = [...rest.slice(0, insertAt), item, ...rest.slice(insertAt)];
@@ -784,6 +787,17 @@ export function useRelay() {
     setActivities((prev) => { const n = { ...prev }; delete n[leadId]; return n; });
     setMessages((prev) => prev.filter((m) => m.leadId !== leadId));
     setActiveThreadLead((cur) => (cur === leadId ? null : cur));
+    // Pull the lead out of a running flow's queue too — a queue entry pointing at
+    // a deleted lead crashes the queue rail (leadById(id)! on a missing id).
+    setFlow((f) => {
+      const idx = f.queue.findIndex((q) => q.leadId === leadId);
+      if (idx < 0) return f;
+      const queue = f.queue.filter((q) => q.leadId !== leadId);
+      const pos = idx < f.pos ? f.pos - 1 : f.pos;
+      const nextItem = queue[pos];
+      if (f.on && nextItem && idx === f.pos) setActiveLeadId(nextItem.leadId);
+      return { ...f, queue, pos: Math.min(pos, queue.length), phase: 'action', pendingAdvance: null, done: f.on && !nextItem ? true : f.done };
+    });
     setActiveLeadId((cur) => (cur === leadId ? (remaining.find((l) => l.deployed !== false)?.id || remaining[0]?.id || cur) : cur));
     if (enabled) deleteLeadRepo(leadId);
   }, [enabled]);
@@ -834,7 +848,7 @@ export function useRelay() {
   const startDueFlow = useCallback(() => startFlow(dueLeads.map((l) => l.id)), [startFlow, dueLeads]);
   // Manually snooze/reschedule a lead N days out (days<=0 clears → due now).
   const snoozeLead = useCallback((leadId: string, days: number) => {
-    const iso = days > 0 ? new Date(Date.now() + days * DAY_MS).toISOString() : null;
+    const iso = days > 0 ? addBusinessDays(new Date(), days).toISOString() : null;
     setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, nextActionAt: iso || undefined } : l)));
     if (enabled) setLeadNextAction(leadId, iso);
     addActivity(leadId, { kind: 'note', ty: days > 0 ? `Snoozed ${days} day${days === 1 ? '' : 's'}` : 'Marked due now', time: 'Just now', body: days > 0 ? `Re-touch in ${days} day${days === 1 ? '' : 's'}.` : 'Back in today’s queue.' });
