@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, deleteLead as deleteLeadRepo } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, markCadenceComplete, deleteLead as deleteLeadRepo } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -48,7 +48,7 @@ const endOfToday = () => { const d = new Date(); d.setHours(23, 59, 59, 999); re
 // A lead is "due" if it's deployed into a cadence, still in rotation, and either
 // never scheduled or its snooze has expired. Staged leads are never due.
 const leadIsDue = (l: Lead) =>
-  l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && (!l.nextActionAt || new Date(l.nextActionAt).getTime() <= endOfToday());
+  l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && !l.cadenceCompletedAt && (!l.nextActionAt || new Date(l.nextActionAt).getTime() <= endOfToday());
 const leadIsScheduled = (l: Lead) =>
   l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && !!l.nextActionAt && new Date(l.nextActionAt).getTime() > endOfToday();
 
@@ -215,7 +215,7 @@ export function useRelay() {
   const startFlow = useCallback(async (onlyIds?: string[]) => {
     const idSet = onlyIds ? new Set(onlyIds) : null;
     const book = leadsRef.current
-      .filter((l) => l.deployed !== false && l.stage !== 'won') // staged leads aren't worked
+      .filter((l) => l.deployed !== false && l.stage !== 'won' && !l.cadenceCompletedAt) // skip staged + already-completed
       .filter((l) => !idSet || idSet.has(l.id));
     if (!book.length) return; // nothing to work
 
@@ -275,7 +275,13 @@ export function useRelay() {
           if (enabled) updateCadencePos(item.leadId, step);
           return { ...f, queue: q, phase: 'action' };
         }
-        // fall through to next salon
+        // No steps left → this salon has completed its whole cadence. Stamp it so
+        // the salon view shows a completion badge, then move to the next salon.
+        const lead = leadsRef.current.find((l) => l.id === item.leadId);
+        const cadName = cadencesRef.current.find((c) => c.id === lead?.cadenceId)?.name || 'Cadence';
+        const iso = new Date().toISOString();
+        setLeads((prev) => prev.map((l) => (l.id === item.leadId ? { ...l, cadenceCompletedAt: iso, cadenceCompletedName: cadName } : l)));
+        if (enabled) markCadenceComplete(item.leadId, cadName, iso);
       }
       const pos = f.pos + 1;
       const nextItem = f.queue[pos];

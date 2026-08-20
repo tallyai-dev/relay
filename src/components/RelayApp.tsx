@@ -312,7 +312,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
             {filtered.map((l, i) => (
               <tr key={l.id} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
-                  <div><div className="nm">{l.salon}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
+                  <div><div className="nm">{l.salon}{l.cadenceCompletedAt && <span className="row-done" title={`Completed ${l.cadenceCompletedName || 'cadence'} · ${fmtDate(l.cadenceCompletedAt)}`}>✓ Done</span>}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
                 <td>{l.contact?.name === '—' ? <span className="muted">No name yet</span> : <div><div style={{ fontWeight: 600 }}>{l.contact?.name}</div><div className="loc">{l.contact?.role}</div></div>}</td>
                 <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
                 <td className="muted">{l.lastTouch}</td>
@@ -845,7 +845,13 @@ function Dialer({ r }: { r: R }) {
 
           <div className="lead-head">
             <div className="avatar big" style={{ background: colorFor(idx) }}>{initials(lead.salon)}</div>
-            <div><h2>{lead.salon}</h2><div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div></div>
+            <div>
+              <h2>{lead.salon}</h2>
+              <div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div>
+              {lead.cadenceCompletedAt && (
+                <div className="cad-done">✓ Completed {lead.cadenceCompletedName || 'cadence'} · {fmtDate(lead.cadenceCompletedAt)}</div>
+              )}
+            </div>
             <div className="r"><QuickEmail lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
@@ -899,6 +905,7 @@ function Dialer({ r }: { r: R }) {
 // One entry in the lead's activity timeline. Calls with a recording get an
 // inline audio player + expandable transcript; the AI summary shows as before.
 const fmtDur = (s?: number) => { if (s == null) return ''; const m = Math.floor(s / 60); return `${m}:${String(s % 60).padStart(2, '0')}`; };
+const fmtDate = (iso?: string) => { if (!iso) return ''; try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return ''; } };
 const recSid = (url?: string) => url?.match(/Recordings\/(RE[0-9a-fA-F]+)/)?.[1];
 
 function TimelineItem({ h }: { h: Activity }) {
@@ -1224,6 +1231,13 @@ function CadenceBuilder({ r }: { r: R }) {
     patchDraft((d) => ({ ...d, steps: d.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)) }));
   const addStep = () => patchDraft((d) => ({ ...d, steps: [...d.steps, { position: d.steps.length, channel: 'call', waitMinutes: 0 }] }));
   const removeStep = (i: number) => patchDraft((d) => ({ ...d, steps: d.steps.filter((_, j) => j !== i) }));
+  // Insert a fresh step right after step i; everything after just shifts down,
+  // its content and branches untouched (steps save by array order).
+  const insertStep = (i: number) => patchDraft((d) => {
+    const steps = d.steps.slice();
+    steps.splice(i + 1, 0, { position: i + 1, channel: 'call', waitMinutes: 0 });
+    return { ...d, steps };
+  });
   const moveStep = (i: number, dir: -1 | 1) => patchDraft((d) => {
     const j = i + dir; if (j < 0 || j >= d.steps.length) return d;
     const steps = d.steps.slice(); [steps[i], steps[j]] = [steps[j], steps[i]]; return { ...d, steps };
@@ -1283,6 +1297,7 @@ function CadenceBuilder({ r }: { r: R }) {
                       <div className="cad-step-ctrls">
                         <button className="ico" title="Move up" disabled={i === 0} onClick={() => moveStep(i, -1)}>↑</button>
                         <button className="ico" title="Move down" disabled={i === draft.steps.length - 1} onClick={() => moveStep(i, 1)}>↓</button>
+                        <button className="ico ins" title="Insert a step below this one" onClick={() => insertStep(i)}>＋</button>
                         <button className="ico del" title="Remove" onClick={() => removeStep(i)}>✕</button>
                       </div>
                     </div>

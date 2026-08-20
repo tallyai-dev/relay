@@ -31,6 +31,8 @@ export interface Lead {
   stage: Stage;
   cadenceId: string;
   cadencePos: number;
+  cadenceCompletedAt?: string;   // ISO — set when the lead finishes its whole cadence
+  cadenceCompletedName?: string; // name of the cadence they completed (snapshot)
   deployed?: boolean;    // false = sitting in the staging pool, not yet in a cadence
   nextActionAt?: string; // ISO — when this lead is next due (null = due now / never scheduled)
   contact?: Contact;

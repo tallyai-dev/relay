@@ -50,6 +50,8 @@ function rowToLead(row: any): Lead {
     stage: row.stage as Stage,
     cadenceId: row.cadence_id || DEFAULT_CADENCE,
     cadencePos: row.cadence_pos ?? 0,
+    cadenceCompletedAt: row.cadence_completed_at || undefined,
+    cadenceCompletedName: row.cadence_completed_name || undefined,
     deployed: row.deployed ?? true,
     nextActionAt: row.next_action_at || undefined,
     contact: c
@@ -362,7 +364,15 @@ export async function saveCadenceSteps(cadenceId: string, steps: CadenceStep[]):
 export async function assignLeadCadence(leadId: string, cadenceId: string): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
-  await sb.from('leads').update({ cadence_id: cadenceId, cadence_pos: 0 }).eq('id', leadId);
+  // New cadence → reset progress and clear any prior completion badge.
+  await sb.from('leads').update({ cadence_id: cadenceId, cadence_pos: 0, cadence_completed_at: null, cadence_completed_name: null }).eq('id', leadId);
+}
+
+// Stamp a lead as having finished its cadence (badge on the salon view).
+export async function markCadenceComplete(leadId: string, name: string, iso: string): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('leads').update({ cadence_completed_at: iso, cadence_completed_name: name }).eq('id', leadId);
 }
 
 // Deploy the N oldest staged leads into a cadence: flip deployed=true, assign the
@@ -376,7 +386,7 @@ export async function deployStagedLeads(count: number, cadenceId: string, ownerR
   if (selErr || !picked?.length) { if (selErr) console.error('deployStagedLeads select', selErr); return []; }
   const ids = picked.map((r: any) => r.id);
   const { error } = await sb.from('leads')
-    .update({ deployed: true, cadence_id: cadenceId, cadence_pos: 0, next_action_at: null })
+    .update({ deployed: true, cadence_id: cadenceId, cadence_pos: 0, next_action_at: null, cadence_completed_at: null, cadence_completed_name: null })
     .in('id', ids);
   if (error) { console.error('deployStagedLeads update', error); return []; }
   return ids;
