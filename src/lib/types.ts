@@ -9,6 +9,9 @@ export interface Rep {
   name: string;
   email?: string;
   role: 'admin' | 'rep';
+  phoneNumber?: string; // their assigned outbound Twilio number (caller ID)
+  active?: boolean;     // deactivated reps can't be assigned new work
+  leadCount?: number;   // owned leads, filled on the Team screen
 }
 
 export interface Contact {
@@ -35,6 +38,7 @@ export interface Lead {
   cadenceCompletedName?: string; // name of the cadence they completed (snapshot)
   deployed?: boolean;    // false = sitting in the staging pool, not yet in a cadence
   nextActionAt?: string; // ISO — when this lead is next due (null = due now / never scheduled)
+  ownerRepId?: string;   // the rep this lead is assigned to (null = unassigned pool)
   contact?: Contact;
   lastTouch?: string;
   objection?: string;

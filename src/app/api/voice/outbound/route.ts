@@ -1,4 +1,5 @@
 import twilio from 'twilio';
+import { supabaseAdmin } from '@/lib/supabase';
 
 // POST /api/voice/outbound  — TwiML App Voice URL.
 // When the browser SDK places a call it hits this; we return TwiML that dials
@@ -21,7 +22,16 @@ export async function POST(req: Request) {
   const form = await req.formData();
   const to = String(form.get('To') || '');
   const leadId = String(form.get('leadId') || '');
-  const callerId = process.env.TWILIO_CALLER_ID || '';
+  const repId = String(form.get('repId') || '');
+  // Dial from the rep's own number when assigned, else the shared caller ID.
+  let callerId = process.env.TWILIO_CALLER_ID || '';
+  if (repId) {
+    const db = supabaseAdmin();
+    if (db) {
+      const { data } = await db.from('reps').select('phone_number').eq('id', repId).maybeSingle();
+      if (data?.phone_number) callerId = data.phone_number;
+    }
+  }
   const disclosure = (process.env.RECORDING_DISCLOSURE || '').trim();
 
   const twiml = new twilio.twiml.VoiceResponse();

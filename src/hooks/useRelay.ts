@@ -3,11 +3,11 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
-export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile';
+export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile' | 'team';
 export interface EnrichResult { found: boolean; name?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; address?: string; hours?: string[]; error?: string }
 
 const DEFAULT_CADENCE_ID = '11111111-1111-1111-1111-111111111111';
@@ -105,6 +105,8 @@ export function useRelay() {
   }, [messages]);
   const warmRef = useRef<Set<string>>(warmLeadIds);
   warmRef.current = warmLeadIds;
+  const meRef = useRef<Rep | null>(me);
+  meRef.current = me;
 
   const enabled = repoEnabled(); // Supabase-backed vs in-memory demo
   const loaded = useRef<Set<string>>(new Set());
@@ -434,7 +436,7 @@ export function useRelay() {
   // optimistic inbox bubble (swap in the DB id) or flag it as failed.
   const sendSms = useCallback(async (to: string, body: string, leadId?: string): Promise<{ ok: boolean; messageId?: string; error?: string }> => {
     try {
-      const res = await fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body, leadId }) });
+      const res = await fetch('/api/sms/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, body, leadId, repId: meRef.current?.id }) });
       const j = await res.json().catch(() => ({}));
       return res.ok ? { ok: true, messageId: j.messageId } : { ok: false, error: j.error || `Send failed (${res.status})` };
     } catch { return { ok: false, error: 'Network error — send did not go through.' }; }
@@ -701,6 +703,40 @@ export function useRelay() {
     if (enabled) bulkAssignCadence(ids, cadenceId);
   }, [enabled]);
 
+  // ── Team (admin) ─────────────────────────────────────────────────────────────
+  const isAdmin = me?.role === 'admin';
+  const [repLeadCounts, setRepLeadCounts] = useState<Record<string, number>>({});
+
+  // Refresh the roster + owned-lead counts for the Team screen.
+  const loadTeam = useCallback(async () => {
+    if (!enabled) return;
+    const [rs, counts] = await Promise.all([fetchReps(), fetchRepLeadCounts()]);
+    setReps(rs);
+    setRepLeadCounts(counts);
+  }, [enabled]);
+
+  // Create a new SDR login; returns a set-password link to hand them.
+  const inviteRep = useCallback(async (email: string, name: string, phoneNumber?: string) => {
+    if (!enabled) return { ok: false, error: 'Connect Supabase to add users.' };
+    const r = await inviteRepRepo(email, name, phoneNumber);
+    if (r.ok) await loadTeam();
+    return r;
+  }, [enabled, loadTeam]);
+
+  // Edit a rep (number, role, active, name) with optimistic local update.
+  const updateRep = useCallback((repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean }) => {
+    setReps((prev) => prev.map((rp) => (rp.id === repId ? { ...rp, ...patch } : rp)));
+    if (enabled) updateRepRepo(repId, patch);
+  }, [enabled]);
+
+  // Assign many leads to a rep (or null to unassign), optimistic.
+  const assignOwnerMany = useCallback((ids: string[], ownerRepId: string | null) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    setLeads((prev) => prev.map((l) => (idSet.has(l.id) ? { ...l, ownerRepId: ownerRepId || undefined } : l)));
+    if (enabled) assignOwnerManyRepo(ids, ownerRepId);
+  }, [enabled]);
+
   // ── Staging pool ─────────────────────────────────────────────────────────────
   const stagedLeads = leads.filter((l) => l.deployed === false);
   const activeLeads = leads.filter((l) => l.deployed !== false);
@@ -839,6 +875,7 @@ export function useRelay() {
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
+    isAdmin, repLeadCounts, loadTeam, inviteRep, updateRep, assignOwnerMany,
     stagedLeads, activeLeads, deployLeads,
     enrichableLeads, enrichLead, saveEnrichment, deleteLead, removeFromCadence,
   };

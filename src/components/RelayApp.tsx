@@ -37,6 +37,7 @@ export default function RelayApp() {
           {r.view === 'dialer' && <Dialer r={r} />}
           {r.view === 'inbox' && <Inbox r={r} />}
           {r.view === 'cadences' && <CadenceBuilder r={r} />}
+          {r.view === 'team' && <TeamView r={r} />}
           {r.view === 'reports' && <Placeholder view={r.view} />}
         </div>
       </div>
@@ -206,6 +207,7 @@ function Rail({ r }: { r: R }) {
       {btn('enrich', 'Enrich', <path d="M13 3l2.3 6.2L22 11.5l-6.7 2.3L13 20l-2.3-6.2L4 11.5l6.7-2.3zM5 3v3M3.5 4.5h3" />)}
       {btn('cadences', 'Cadences', <path d="M3 12h4l3 8 4-16 3 8h4" />, 'Cadence')}
       {btn('reports', 'Reports', <path d="M3 3v18h18M8 15v3M13 9v9M18 5v13" />)}
+      {r.isAdmin && btn('team', 'Team', <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.9M16 3.1a4 4 0 010 7.8" />)}
       <div className="spacer" />
       <div className="me" title={r.me?.name || 'You'}>{r.me ? initials(r.me.name) : 'SB'}</div>
     </nav>
@@ -249,7 +251,9 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   const [stage, setStage] = useState('all');
   const [booking, setBooking] = useState('all');
   const [due, setDue] = useState('all');
+  const [owner, setOwner] = useState('all');
   const [needsEnrich, setNeedsEnrich] = useState(false);
+  const repName = (id?: string) => r.reps.find((x) => x.id === id)?.name;
 
   const bookingOpts = Array.from(new Set(r.activeLeads.map((l) => l.bookingSystem).filter(Boolean))).sort() as string[];
   const dueSet = new Set(r.dueLeads.map((l) => l.id));
@@ -262,12 +266,14 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
     else if (booking !== 'all' && l.bookingSystem !== booking) return false;
     if (due === 'due' && !dueSet.has(l.id)) return false;
     if (due === 'sched' && !schedSet.has(l.id)) return false;
+    if (owner === 'none') { if (l.ownerRepId) return false; }
+    else if (owner !== 'all' && l.ownerRepId !== owner) return false;
     if (needsEnrich && l.phone && l.email && l.website && l.bookingSystem) return false;
     return true;
   });
 
-  const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || needsEnrich;
-  const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setNeedsEnrich(false); };
+  const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || owner !== 'all' || needsEnrich;
+  const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setOwner('all'); setNeedsEnrich(false); };
 
   // Bulk selection → assign many leads to a cadence at once.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -280,8 +286,10 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
     return next;
   });
   const toggleOne = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const [bulkOwner, setBulkOwner] = useState('');
   const clearSel = () => setSelected(new Set());
   const doBulkAssign = () => { if (!bulkCad || !selected.size) return; r.assignCadenceMany([...selected], bulkCad); clearSel(); setBulkCad(''); };
+  const doBulkOwner = () => { if (!bulkOwner || !selected.size) return; r.assignOwnerMany([...selected], bulkOwner === 'none' ? null : bulkOwner); clearSel(); setBulkOwner(''); };
 
   return (
     <section className="view on">
@@ -316,6 +324,13 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
           <option value="due">Due today</option>
           <option value="sched">Scheduled</option>
         </select>
+        {r.isAdmin && r.reps.length > 1 && (
+          <select value={owner} onChange={(e) => setOwner(e.target.value)}>
+            <option value="all">All owners</option>
+            <option value="none">Unassigned</option>
+            {r.reps.map((rp) => <option key={rp.id} value={rp.id}>{rp.name}</option>)}
+          </select>
+        )}
         <button className={`lf-toggle ${needsEnrich ? 'on' : ''}`} onClick={() => setNeedsEnrich((v) => !v)}>Needs enrichment</button>
         {anyFilter && <button className="lf-clear" onClick={clearFilters}>Clear</button>}
         <span className="lf-count">{filtered.length} of {r.activeLeads.length}</span>
@@ -328,9 +343,19 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
             <option value="">Assign to cadence…</option>
             {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <button className="btn sm primary" disabled={!bulkCad} onClick={doBulkAssign}>Assign {selected.size} {selected.size === 1 ? 'lead' : 'leads'}</button>
+          <button className="btn sm primary" disabled={!bulkCad} onClick={doBulkAssign}>Assign cadence</button>
+          {r.isAdmin && (
+            <>
+              <select value={bulkOwner} onChange={(e) => setBulkOwner(e.target.value)}>
+                <option value="">Assign owner…</option>
+                {r.reps.map((rp) => <option key={rp.id} value={rp.id}>{rp.name}</option>)}
+                <option value="none">Unassign</option>
+              </select>
+              <button className="btn sm primary" disabled={!bulkOwner} onClick={doBulkOwner}>Set owner</button>
+            </>
+          )}
           <button className="btn sm" onClick={clearSel}>Clear selection</button>
-          <span className="bulk-hint">Reassigning starts them fresh at day 0 of the new cadence, due now.</span>
+          <span className="bulk-hint">Assigning a cadence starts them fresh at day 0, due now.</span>
         </div>
       )}
 
@@ -345,7 +370,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
               <tr key={l.id} className={selected.has(l.id) ? 'row-sel' : ''} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
                 <td className="ck" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} /></td>
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
-                  <div><div className="nm">{l.salon}{l.cadenceCompletedAt && <span className="row-done" title={`Completed ${l.cadenceCompletedName || 'cadence'} · ${fmtDate(l.cadenceCompletedAt)}`}>✓ Done</span>}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
+                  <div><div className="nm">{l.salon}{l.cadenceCompletedAt && <span className="row-done" title={`Completed ${l.cadenceCompletedName || 'cadence'} · ${fmtDate(l.cadenceCompletedAt)}`}>✓ Done</span>}{r.isAdmin && l.ownerRepId && <span className="row-owner" title="Assigned rep">{repName(l.ownerRepId)}</span>}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
                 <td>{l.contact?.name === '—' ? <span className="muted">No name yet</span> : <div><div style={{ fontWeight: 600 }}>{l.contact?.name}</div><div className="loc">{l.contact?.role}</div></div>}</td>
                 <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
                 <td className="muted">{l.lastTouch}</td>
@@ -585,6 +610,80 @@ function EnrichView({ r }: { r: R }) {
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+// Admin-only team management: add SDR logins, assign each a number, flip roles,
+// deactivate. Lead assignment happens from the Pipeline's bulk bar.
+function TeamView({ r }: { r: R }) {
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [number, setNumber] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
+
+  useEffect(() => { r.loadTeam(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const add = async () => {
+    setErr(''); setInvite(null);
+    if (!email.trim()) { setErr('Enter an email.'); return; }
+    setBusy(true);
+    const res = await r.inviteRep(email.trim(), name.trim() || email.trim(), number.trim() || undefined);
+    setBusy(false);
+    if (!res.ok) { setErr(res.error || 'Could not add user.'); return; }
+    setInvite({ email: email.trim(), link: res.inviteLink || '' });
+    setEmail(''); setName(''); setNumber('');
+  };
+
+  return (
+    <section className="view on">
+      <div className="page-head"><div><h1>Team</h1><p>{r.reps.length} {r.reps.length === 1 ? 'member' : 'members'} · add an SDR, give them a number, then assign leads from the Pipeline.</p></div></div>
+
+      <div className="block team-add">
+        <div className="bt">Add a user</div>
+        <div className="team-form">
+          <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder="Phone number (optional)" value={number} onChange={(e) => setNumber(e.target.value)} />
+          <button className="btn primary" disabled={busy} onClick={add}>{busy ? 'Adding…' : 'Add user'}</button>
+        </div>
+        {err && <div className="team-err">{err}</div>}
+        {invite && (
+          <div className="team-invite">
+            <div className="ti-head">✓ <b>{invite.email}</b> created. Send them this link to set their password:</div>
+            <div className="ti-link">
+              <input readOnly value={invite.link} onFocus={(e) => e.currentTarget.select()} />
+              <button className="btn sm" onClick={() => navigator.clipboard?.writeText(invite.link)}>Copy</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="team-list">
+        {r.reps.map((rp) => (
+          <div key={rp.id} className={`team-row ${rp.active === false ? 'inactive' : ''}`}>
+            <div className="avatar ai team-av">{initials(rp.name)}</div>
+            <div className="team-main">
+              <div className="nm">{rp.name}{rp.id === r.me?.id && <span className="ti-you">you</span>}<span className={`role-badge ${rp.role}`}>{rp.role}</span></div>
+              <div className="mt">{rp.email}</div>
+            </div>
+            <label className="team-num">Number
+              <input defaultValue={rp.phoneNumber || ''} placeholder="+1…" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (rp.phoneNumber || '')) r.updateRep(rp.id, { phoneNumber: v }); }} />
+            </label>
+            <div className="team-leads"><b>{r.repLeadCounts[rp.id] || 0}</b><span>leads</span></div>
+            <div className="team-actions">
+              {rp.id !== r.me?.id && (
+                <>
+                  <button className="btn sm" onClick={() => r.updateRep(rp.id, { role: rp.role === 'admin' ? 'rep' : 'admin' })}>{rp.role === 'admin' ? 'Make rep' : 'Make admin'}</button>
+                  <button className="btn sm" onClick={() => r.updateRep(rp.id, { active: rp.active === false })}>{rp.active === false ? 'Reactivate' : 'Deactivate'}</button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -1252,7 +1351,7 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
         } else { runSim(inScript); }
         return;
       }
-      const call = await placeCall(lead.phone || '', lead.id);
+      const call = await placeCall(lead.phone || '', lead.id, r.me?.id);
       if (cancelled) { call?.disconnect?.(); return; }
       if (call) {
         callRef.current = call;
@@ -1488,7 +1587,7 @@ function Keypad({ r }: { r: R }) {
   const call = async () => {
     if (!ready) return;
     setMode('calling'); setStatus('Connecting…'); setSecs(0);
-    const c = await placeCall(num);
+    const c = await placeCall(num, undefined, r.me?.id);
     if (c) {
       callRef.current = c;
       c.on('accept', () => setStatus('Connected'));
@@ -1615,7 +1714,7 @@ function FloatingDialer({ r }: { r: R }) {
   const call = async () => {
     if (!ready) return;
     setMode('calling'); setStatus('Connecting…'); setSecs(0);
-    const c = await placeCall(num);
+    const c = await placeCall(num, undefined, r.me?.id);
     if (c) {
       callRef.current = c;
       c.on('accept', () => setStatus('Connected'));

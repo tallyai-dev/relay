@@ -17,16 +17,80 @@ export async function fetchMe(): Promise<Rep | null> {
   const { data: u } = await sb.auth.getUser();
   const uid = u.user?.id;
   if (!uid) return null;
-  const { data } = await sb.from('reps').select('id,name,email,role').eq('auth_user_id', uid).maybeSingle();
-  return data ? { id: data.id, name: data.name, email: data.email, role: data.role } : null;
+  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active').eq('auth_user_id', uid).maybeSingle();
+  return data ? { id: data.id, name: data.name, email: data.email, role: data.role, phoneNumber: data.phone_number || undefined, active: data.active ?? true } : null;
 }
 
 // Reps visible to the current user (admins see all; reps see themselves).
 export async function fetchReps(): Promise<Rep[]> {
   const sb = supabaseBrowser();
   if (!sb) return [];
-  const { data } = await sb.from('reps').select('id,name,email,role').order('name');
-  return (data || []).map((r: any) => ({ id: r.id, name: r.name, email: r.email, role: r.role }));
+  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active').order('name');
+  return (data || []).map((r: any) => ({ id: r.id, name: r.name, email: r.email, role: r.role, phoneNumber: r.phone_number || undefined, active: r.active ?? true }));
+}
+
+// How many leads each rep owns (admin Team screen). One grouped read.
+export async function fetchRepLeadCounts(): Promise<Record<string, number>> {
+  const sb = supabaseBrowser();
+  if (!sb) return {};
+  const counts: Record<string, number> = {};
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb.from('leads').select('owner_rep_id').not('owner_rep_id', 'is', null).range(from, from + PAGE - 1);
+    if (error || !data || !data.length) break;
+    for (const r of data as any[]) counts[r.owner_rep_id] = (counts[r.owner_rep_id] || 0) + 1;
+    if (data.length < PAGE) break;
+  }
+  return counts;
+}
+
+// Admin edits to a rep row (number, role, active, name). Allowed by the reps
+// RLS update policy for admins; no server endpoint needed.
+export async function updateRep(repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean }): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  const row: any = {};
+  if (patch.name !== undefined) row.name = patch.name;
+  if (patch.role !== undefined) row.role = patch.role;
+  if (patch.phoneNumber !== undefined) row.phone_number = patch.phoneNumber || null;
+  if (patch.active !== undefined) row.active = patch.active;
+  const { error } = await sb.from('reps').update(row).eq('id', repId);
+  if (error) console.error('updateRep', error);
+}
+
+// Assign many leads to a rep (or null to unassign). Chunked. Admin-only via RLS.
+export async function assignOwnerMany(leadIds: string[], ownerRepId: string | null): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb || !leadIds.length) return;
+  const CHUNK = 200;
+  for (let i = 0; i < leadIds.length; i += CHUNK) {
+    const batch = leadIds.slice(i, i + CHUNK);
+    const { error } = await sb.from('leads').update({ owner_rep_id: ownerRepId }).in('id', batch);
+    if (error) console.error('assignOwnerMany', error);
+  }
+}
+
+// Invite a new SDR: create the auth login (server, service role) and get back a
+// set-password link to hand them. Passes the caller's access token so the
+// endpoint can verify the requester is an admin.
+export async function inviteRep(email: string, name: string, phoneNumber?: string): Promise<{ ok: boolean; inviteLink?: string; error?: string }> {
+  const sb = supabaseBrowser();
+  if (!sb) return { ok: false, error: 'Not connected.' };
+  const { data: sess } = await sb.auth.getSession();
+  const token = sess.session?.access_token;
+  if (!token) return { ok: false, error: 'Not signed in.' };
+  try {
+    const res = await fetch('/api/team/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ email, name, phoneNumber }),
+    });
+    const j = await res.json();
+    if (!res.ok) return { ok: false, error: j.error || 'Could not create user.' };
+    return { ok: true, inviteLink: j.inviteLink };
+  } catch (e: any) {
+    return { ok: false, error: String(e) };
+  }
 }
 
 export async function signOut(): Promise<void> {
@@ -54,6 +118,7 @@ function rowToLead(row: any): Lead {
     cadenceCompletedName: row.cadence_completed_name || undefined,
     deployed: row.deployed ?? true,
     nextActionAt: row.next_action_at || undefined,
+    ownerRepId: row.owner_rep_id || undefined,
     contact: c
       ? { id: c.id, name: c.name || '—', role: c.role || '—', phone: c.phone, email: c.email }
       : { id: 'c', name: '—', role: '—' },
