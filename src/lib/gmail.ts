@@ -59,6 +59,14 @@ function buildTrackedHtml(body: string, trackId: string, baseUrl: string): strin
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#111">${html}</div>${pixel}`;
 }
 
+// Email headers must be 7-bit ASCII, so any non-ASCII in the subject (an em dash,
+// an accented salon name…) has to be MIME "encoded-word" wrapped — otherwise the
+// bytes get mangled into mojibake like "Ã¢Â€Â". Pure-ASCII subjects pass through.
+function encodeSubject(s: string): string {
+  if (/^[\x00-\x7F]*$/.test(s)) return s;
+  return `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
+}
+
 // Send an email from the configured mailbox. When track {id,baseUrl} is given,
 // sends multipart/alternative (plain + tracked HTML) so opens and link clicks
 // are recorded; otherwise sends plain text only.
@@ -73,7 +81,7 @@ export async function sendGmail(
   if (track) {
     const boundary = `relay_${track.id.replace(/[^a-zA-Z0-9]/g, '')}`;
     mime = [
-      `From: ${from}`, `To: ${to}`, `Subject: ${subject || ''}`,
+      `From: ${from}`, `To: ${to}`, `Subject: ${encodeSubject(subject || '')}`,
       'MIME-Version: 1.0', `Content-Type: multipart/alternative; boundary="${boundary}"`, '',
       `--${boundary}`, 'Content-Type: text/plain; charset=UTF-8', '', body || '',
       `--${boundary}`, 'Content-Type: text/html; charset=UTF-8', '', buildTrackedHtml(body || '', track.id, track.baseUrl),
@@ -81,7 +89,7 @@ export async function sendGmail(
     ].join('\r\n');
   } else {
     mime = [
-      `From: ${from}`, `To: ${to}`, `Subject: ${subject || ''}`,
+      `From: ${from}`, `To: ${to}`, `Subject: ${encodeSubject(subject || '')}`,
       'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', '', body || '',
     ].join('\r\n');
   }
