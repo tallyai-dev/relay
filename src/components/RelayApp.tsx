@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRelay, type EnrichResult } from '@/hooks/useRelay';
+import { useRelay, isOverdue, type EnrichResult } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
 import { placeCall, normalizePhone } from '@/lib/voice';
@@ -836,7 +836,36 @@ function RemoveFromCadence({ r, leadId }: { r: R; leadId: string }) {
   );
 }
 
+// Day-cleared / nothing-due screen for the flow.
+function FlowDone({ r }: { r: R }) {
+  const s = r.stats;
+  const nothingDue = r.flow.queue.length === 0;
+  return (
+    <section className="view on flowdone">
+      <div className="fd-card">
+        <div className="fd-emoji">{nothingDue ? '☕️' : '🎉'}</div>
+        <h2>{nothingDue ? 'Nothing due today' : "That's your list — nicely done"}</h2>
+        <p className="fd-sub">{nothingDue
+          ? "You're all caught up. Salons scheduled for a future working day will appear here when they come due."
+          : "You've worked every salon due today. Come back next working day for the next batch."}</p>
+        {!nothingDue && (
+          <div className="fd-stats">
+            <div><b>{s.dials}</b><span>dials</span></div>
+            <div><b>{s.conversations}</b><span>convos</span></div>
+            <div><b>{s.texts}</b><span>texts</span></div>
+            <div><b>{s.emails}</b><span>emails</span></div>
+            <div><b>{s.demos}</b><span>demos</span></div>
+          </div>
+        )}
+        <button className="btn primary" onClick={r.exitFlow}>Done</button>
+      </div>
+    </section>
+  );
+}
+
 function Dialer({ r }: { r: R }) {
+  // Whole due list worked (or nothing was due) → the day-cleared screen.
+  if (r.flow.on && r.flow.done) return <FlowDone r={r} />;
   const lead = r.leadById(r.activeLeadId);
   if (!lead) return null;
   const acts = r.activities[lead.id] || [];
@@ -867,13 +896,17 @@ function Dialer({ r }: { r: R }) {
         <div className="ws-center">
           {inFlow ? (
             <div className="session-bar flow">
-              <span>⚡ <b>Flow</b> · Cold Salon Outbound · {r.flow.queue.length - r.flow.pos} of {r.flow.queue.length} salons left</span>
+              <span>⚡ <b>Today&apos;s list</b> · {r.flow.queue.length - r.flow.pos} of {r.flow.queue.length} salons left</span>
               <div className="prog"><i style={{ width: `${(r.flow.pos / Math.max(1, r.flow.queue.length)) * 100}%` }} /></div>
               <button className="btn sm" onClick={r.exitFlow}>Exit flow</button>
             </div>
           ) : (
             <div className="session-bar"><span>Manual dial</span><div className="prog"><i style={{ width: '20%' }} /></div>
               <button className="btn sm flowbtn" onClick={() => r.startFlow()}>Start Flow</button></div>
+          )}
+
+          {inFlow && r.flow.notice && (
+            <div className="flow-notice">{r.flow.notice}<span className="fn-next">Next up: {lead.salon}</span></div>
           )}
 
           <div className="lead-head">
@@ -883,6 +916,9 @@ function Dialer({ r }: { r: R }) {
               <div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div>
               {lead.cadenceCompletedAt && (
                 <div className="cad-done">✓ Completed {lead.cadenceCompletedName || 'cadence'} · {fmtDate(lead.cadenceCompletedAt)}</div>
+              )}
+              {!lead.cadenceCompletedAt && isOverdue(lead) && (
+                <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
               )}
             </div>
             <div className="r"><QuickEmail lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>

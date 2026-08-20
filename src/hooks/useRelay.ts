@@ -36,6 +36,8 @@ interface FlowState {
   noteActivityId: string | null;
   noteAiText: string | null;
   paused: boolean;
+  notice: string | null; // transient "salon done → next" nudge
+  done: boolean;         // whole due list worked for the day
 }
 interface ActiveCall { leadId: string; direction: 'out' | 'in'; viaFlow: boolean; incomingCall?: any }
 
@@ -45,6 +47,17 @@ const last10 = (p?: string) => (p || '').replace(/\D/g, '').slice(-10);
 
 const DAY_MS = 864e5;
 const endOfToday = () => { const d = new Date(); d.setHours(23, 59, 59, 999); return d.getTime(); };
+const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+// Advance `n` business days (Mon–Fri), landing at the start of that day. Used to
+// space cadence steps out by their day gap while skipping weekends.
+function addBusinessDays(from: Date, n: number): Date {
+  const d = new Date(from); d.setHours(0, 0, 0, 0);
+  let added = 0;
+  while (added < Math.max(1, n)) { d.setDate(d.getDate() + 1); const wd = d.getDay(); if (wd !== 0 && wd !== 6) added++; }
+  return d;
+}
+const fmtDueLabel = (d: Date) => d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+export const isOverdue = (l: Lead) => !!l.nextActionAt && new Date(l.nextActionAt).getTime() < startOfToday();
 // A lead is "due" if it's deployed into a cadence, still in rotation, and either
 // never scheduled or its snooze has expired. Staged leads are never due.
 const leadIsDue = (l: Lead) =>
@@ -62,7 +75,7 @@ export function useRelay() {
   const [activeLeadId, setActiveLeadId] = useState<string>('l1');
   const [flow, setFlow] = useState<FlowState>({
     on: false, queue: [], pos: 0, phase: 'action', actionCount: 0,
-    pendingAdvance: null, noteActivityId: null, noteAiText: null, paused: false,
+    pendingAdvance: null, noteActivityId: null, noteAiText: null, paused: false, notice: null, done: false,
   });
   const [messages, setMessages] = useState<Message[]>(SEED_MESSAGES);
   const [activeThreadLead, setActiveThreadLead] = useState<string | null>(null);
@@ -231,10 +244,19 @@ export function useRelay() {
   // Build the session queue from the rep's current book (RLS already scoped it).
   const startFlow = useCallback(async (onlyIds?: string[]) => {
     const idSet = onlyIds ? new Set(onlyIds) : null;
+    // Today's worklist = only salons with something DUE (or overdue). Skips
+    // staged, won, removed (cold), completed, and anything scheduled for a
+    // future day. Most-overdue first so backlog surfaces at the top.
     const book = leadsRef.current
-      .filter((l) => l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && !l.cadenceCompletedAt) // skip staged, closed, removed, completed
-      .filter((l) => !idSet || idSet.has(l.id));
-    if (!book.length) return; // nothing to work
+      .filter((l) => leadIsDue(l))
+      .filter((l) => !idSet || idSet.has(l.id))
+      .sort((a, b) => (a.nextActionAt ? new Date(a.nextActionAt).getTime() : startOfToday()) - (b.nextActionAt ? new Date(b.nextActionAt).getTime() : startOfToday()));
+    if (!book.length) {
+      // Nothing due — show the "all caught up" screen instead of a stale queue.
+      setFlow((f) => ({ ...f, on: true, done: true, queue: [], pos: 0, phase: 'action', notice: null }));
+      setView('dialer');
+      return;
+    }
 
     // How far each salon already is in its cadence, from real logged touches, so
     // the flow resumes instead of restarting at attempt 1. Real mode queries the
@@ -267,7 +289,7 @@ export function useRelay() {
 
     // Reflect the resume point in the queue rail ("X/5") too.
     setLeads((prev) => prev.map((l) => (resumeStep[l.id] != null ? { ...l, cadencePos: resumeStep[l.id] } : l)));
-    setFlow({ on: true, queue, pos: 0, phase: 'action', actionCount: 0, pendingAdvance: null, noteActivityId: null, noteAiText: null, paused: false });
+    setFlow({ on: true, queue, pos: 0, phase: 'action', actionCount: 0, pendingAdvance: null, noteActivityId: null, noteAiText: null, paused: false, notice: null, done: false });
     setActiveLeadId(queue[0].leadId);
     setView('dialer');
   }, [enabled]);
@@ -281,30 +303,43 @@ export function useRelay() {
     setFlow((f) => {
       const item = f.queue[f.pos];
       if (!item) return f;
+      let notice: string | null = null;
       if (kind === 'onward') {
         const step = item.step + 1;
         if (step < item.plan.length) {
-          const q = f.queue.slice();
-          q[f.pos] = { ...item, step };
-          setActiveLeadId(item.leadId);
-          // Remember how far this salon has progressed (rail + durable).
-          setLeads((prev) => prev.map((l) => (l.id === item.leadId ? { ...l, cadencePos: step } : l)));
-          if (enabled) updateCadencePos(item.leadId, step);
-          return { ...f, queue: q, phase: 'action' };
+          // Day gap sits BEFORE the next step: 0 = same-day (keep working this
+          // salon now); >0 = this salon's work for today is done — schedule the
+          // next touch that many business days out and move on.
+          const gapDays = Math.round((item.steps[step]?.waitMinutes || 0) / 1440);
+          if (gapDays <= 0) {
+            const q = f.queue.slice();
+            q[f.pos] = { ...item, step };
+            setActiveLeadId(item.leadId);
+            setLeads((prev) => prev.map((l) => (l.id === item.leadId ? { ...l, cadencePos: step } : l)));
+            if (enabled) updateCadencePos(item.leadId, step);
+            return { ...f, queue: q, phase: 'action' };
+          }
+          const due = addBusinessDays(new Date(), gapDays);
+          const dueIso = due.toISOString();
+          const salon = leadsRef.current.find((l) => l.id === item.leadId)?.salon || 'Salon';
+          setLeads((prev) => prev.map((l) => (l.id === item.leadId ? { ...l, cadencePos: step, nextActionAt: dueIso } : l)));
+          if (enabled) { updateCadencePos(item.leadId, step); setLeadNextAction(item.leadId, dueIso); }
+          notice = `✓ ${salon} — today's steps done. Next touch ${fmtDueLabel(due)}.`;
+        } else {
+          // Whole cadence finished → completion badge, then move on.
+          const lead = leadsRef.current.find((l) => l.id === item.leadId);
+          const cadName = cadencesRef.current.find((c) => c.id === lead?.cadenceId)?.name || 'Cadence';
+          const iso = new Date().toISOString();
+          setLeads((prev) => prev.map((l) => (l.id === item.leadId ? { ...l, cadenceCompletedAt: iso, cadenceCompletedName: cadName } : l)));
+          if (enabled) markCadenceComplete(item.leadId, cadName, iso);
+          notice = `✓ ${lead?.salon || 'Salon'} completed ${cadName}.`;
         }
-        // No steps left → this salon has completed its whole cadence. Stamp it so
-        // the salon view shows a completion badge, then move to the next salon.
-        const lead = leadsRef.current.find((l) => l.id === item.leadId);
-        const cadName = cadencesRef.current.find((c) => c.id === lead?.cadenceId)?.name || 'Cadence';
-        const iso = new Date().toISOString();
-        setLeads((prev) => prev.map((l) => (l.id === item.leadId ? { ...l, cadenceCompletedAt: iso, cadenceCompletedName: cadName } : l)));
-        if (enabled) markCadenceComplete(item.leadId, cadName, iso);
       }
       const pos = f.pos + 1;
       const nextItem = f.queue[pos];
-      // Keep the next salon's resume step (set at flow start) — don't reset to 0.
-      if (nextItem) { setActiveLeadId(nextItem.leadId); }
-      return { ...f, pos, phase: 'action', pendingAdvance: null };
+      if (nextItem) { setActiveLeadId(nextItem.leadId); return { ...f, pos, phase: 'action', pendingAdvance: null, notice }; }
+      // No salons left → today's list is cleared.
+      return { ...f, pos, phase: 'action', pendingAdvance: null, notice, done: true };
     });
   }, [enabled]);
 
@@ -320,7 +355,7 @@ export function useRelay() {
     // Dials are counted when the call is dispositioned (see applyDispo), so a
     // ring that's abandoned before an outcome doesn't inflate the count.
     setActiveCall({ leadId: current.leadId, direction: 'out', viaFlow: true });
-    setFlow((f) => ({ ...f, actionCount: f.actionCount + 1, phase: 'incall' }));
+    setFlow((f) => ({ ...f, actionCount: f.actionCount + 1, phase: 'incall', notice: null }));
   }, [current]);
 
   // Called by the live CallPanel's "End & log" (both outbound-flow and inbound).
@@ -478,7 +513,7 @@ export function useRelay() {
       else r = lead?.email ? await sendEmailApi(lead.email, subject, body, lid) : { ok: false, error: 'No email on file for this lead.' };
       reconcileSent(tempId, r);
     })();
-    setFlow((f) => ({ ...f, actionCount: f.actionCount + 1 }));
+    setFlow((f) => ({ ...f, actionCount: f.actionCount + 1, notice: null }));
     advance('onward');
   }, [current, addActivity, advance, leadById, enabled, sendSms, sendEmailApi, reconcileSent]);
 
