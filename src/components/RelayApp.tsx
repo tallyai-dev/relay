@@ -4,6 +4,7 @@ import { useRelay, isOverdue, type EnrichResult } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
 import { placeCall, normalizePhone } from '@/lib/voice';
+import { openCalendly } from '@/lib/calendly';
 import { analyzeImport } from '@/lib/csv';
 
 type R = ReturnType<typeof useRelay>;
@@ -938,6 +939,16 @@ function QuickEmail({ r, lead }: { r: R; lead: Lead }) {
   );
 }
 
+// Opens the Calendly scheduler in a popup over Relay, prefilled with the salon.
+// The booking syncs back via /api/calendly/webhook.
+function BookDemo({ lead }: { lead: Lead }) {
+  const name = lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name : lead.salon;
+  return (
+    <button className="btn sm book-demo" title="Book a demo — opens Calendly"
+      onClick={() => openCalendly({ name, email: lead.email, leadId: lead.id })}>📅 Book demo</button>
+  );
+}
+
 // In-app email composer: edit the subject/body (start from a template or blank)
 // and send it via Gmail as sales@gettallyai.com. Logged to the lead + threaded
 // into the Inbox; replies sync back. "Open in Gmail" is kept as a fallback.
@@ -1105,7 +1116,7 @@ function Dialer({ r }: { r: R }) {
                 <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
               )}
             </div>
-            <div className="r"><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><BookDemo lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           {inFlow ? (

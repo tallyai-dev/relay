@@ -196,6 +196,9 @@ export async function fetchTodayStats(): Promise<DailyStats> {
       if (talked.has(r.disposition)) s.conversations++;
       if (r.disposition === 'booked') s.demos++;
     }
+    // A demo booked via Calendly is logged as kind='book' with no call
+    // disposition — count it as a demo, but not as a dial/conversation.
+    else if (r.kind === 'book' && !r.disposition) s.demos++;
   }
   return s;
 }
