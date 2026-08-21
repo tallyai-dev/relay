@@ -771,15 +771,37 @@ function ReportsView({ r, repFilter, setRepFilter }: { r: R; repFilter: string; 
   }, [r.enabled, sinceIso, scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stat = useMemo(() => {
-    const s = { calls: 0, connects: 0, texts: 0, emails: 0, demos: 0 };
+    const s = { calls: 0, connects: 0, texts: 0, emails: 0, demos: 0, voicemails: 0, talkS: 0 };
     for (const a of rows) {
-      if (a.kind === 'call') { s.calls++; if (a.disposition === 'connected' || a.disposition === 'booked') s.connects++; }
+      if (a.kind === 'call') {
+        s.calls++;
+        if (a.disposition === 'connected' || a.disposition === 'booked') s.connects++;
+        if (a.disposition === 'voicemail') s.voicemails++;
+        if (a.durationS) s.talkS += a.durationS;
+      }
       else if (a.kind === 'text' && a.direction !== 'in') s.texts++;
       else if (a.kind === 'email' && a.direction !== 'in') s.emails++;
       if (a.kind === 'book') s.demos++;
     }
     return s;
   }, [rows]);
+  // Prospecting ratios — the numbers that tell you if the blitz is working.
+  const connectRate = stat.calls ? Math.round((stat.connects / stat.calls) * 100) : 0;
+  const dialsPerDemo = stat.demos ? (stat.calls / stat.demos).toFixed(1) : '—';
+  const touchesPerDemo = stat.demos ? ((stat.calls + stat.texts + stat.emails) / stat.demos).toFixed(1) : '—';
+  const talkTime = stat.talkS >= 3600
+    ? `${Math.floor(stat.talkS / 3600)}h ${Math.round((stat.talkS % 3600) / 60)}m`
+    : `${Math.round(stat.talkS / 60)}m`;
+
+  const [kindFilter, setKindFilter] = useState<'all' | 'call' | 'text' | 'email' | 'book'>('all');
+  const filtered = useMemo(() => (kindFilter === 'all' ? rows : rows.filter((a) => a.kind === kindFilter)), [rows, kindFilter]);
+  const KIND_TABS = [
+    { id: 'all', label: 'All' },
+    { id: 'call', label: 'Calls' },
+    { id: 'text', label: 'Texts' },
+    { id: 'email', label: 'Emails' },
+    { id: 'book', label: 'Demos' },
+  ] as const;
 
   const chart = useMemo(() => {
     const buckets: { label: string; calls: number; msgs: number }[] = [];
@@ -826,6 +848,13 @@ function ReportsView({ r, repFilter, setRepFilter }: { r: R; repFilter: string; 
         <div className="rp-stat"><span className="n">{stat.emails}</span><span className="l">Emails</span></div>
         <div className="rp-stat hot"><span className="n">{stat.demos}</span><span className="l">Demos booked</span></div>
       </div>
+      <div className="rp-stats rp-kpis">
+        <div className="rp-stat"><span className="n">{connectRate}%</span><span className="l">Connect rate</span></div>
+        <div className="rp-stat"><span className="n">{dialsPerDemo}</span><span className="l">Calls per demo set</span></div>
+        <div className="rp-stat"><span className="n">{touchesPerDemo}</span><span className="l">Touches per demo set</span></div>
+        <div className="rp-stat"><span className="n">{stat.voicemails}</span><span className="l">Voicemails left</span></div>
+        <div className="rp-stat"><span className="n">{talkTime}</span><span className="l">Talk time</span></div>
+      </div>
 
       {days > 1 && (
         <div className="block rp-chart-block">
@@ -845,12 +874,19 @@ function ReportsView({ r, repFilter, setRepFilter }: { r: R; repFilter: string; 
       )}
 
       <div className="block rp-feed-block">
-        <div className="bt">Activity feed {rows.length > 0 && <span className="rp-count">{rows.length}</span>}</div>
-        {rows.length === 0 ? (
-          <div className="muted" style={{ padding: 16 }}>{loading ? 'Loading…' : 'No activity in this window yet.'}</div>
+        <div className="bt rp-feed-head">
+          <span>Activity feed {filtered.length > 0 && <span className="rp-count">{filtered.length}</span>}</span>
+          <div className="rp-kind">
+            {KIND_TABS.map((t) => (
+              <button key={t.id} className={kindFilter === t.id ? 'on' : ''} onClick={() => setKindFilter(t.id)}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+        {filtered.length === 0 ? (
+          <div className="muted" style={{ padding: 16 }}>{loading ? 'Loading…' : kindFilter === 'all' ? 'No activity in this window yet.' : `No ${KIND_TABS.find((t) => t.id === kindFilter)?.label.toLowerCase()} in this window.`}</div>
         ) : (
           <div className="rp-feed">
-            {rows.slice(0, 120).map((a) => (
+            {filtered.slice(0, 120).map((a) => (
               <div key={a.id} className="rp-row">
                 <div className={`rp-ic k-${a.kind}`}>{icFor(a.kind)}</div>
                 <div className="rp-main">
@@ -865,7 +901,7 @@ function ReportsView({ r, repFilter, setRepFilter }: { r: R; repFilter: string; 
                 </div>
               </div>
             ))}
-            {rows.length > 120 && <div className="muted" style={{ padding: '10px 14px' }}>Showing the latest 120 of {rows.length}.</div>}
+            {filtered.length > 120 && <div className="muted" style={{ padding: '10px 14px' }}>Showing the latest 120 of {filtered.length}.</div>}
           </div>
         )}
       </div>
