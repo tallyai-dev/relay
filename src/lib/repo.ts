@@ -70,6 +70,15 @@ export async function assignOwnerMany(leadIds: string[], ownerRepId: string | nu
   }
 }
 
+// Email the user a password-reset link directly (Supabase sends the email).
+// Works from the sign-in screen (unauthenticated) and the admin Team screen.
+export async function sendPasswordResetEmail(email: string): Promise<{ ok: boolean; error?: string }> {
+  const sb = supabaseBrowser();
+  if (!sb) return { ok: false, error: 'Not connected.' };
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
 // Post to an admin team endpoint with the caller's access token attached.
 async function adminTeamPost(path: string, payload: any): Promise<{ ok: boolean; inviteLink?: string; error?: string }> {
   const sb = supabaseBrowser();

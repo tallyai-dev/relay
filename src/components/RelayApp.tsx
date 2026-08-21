@@ -647,14 +647,26 @@ function TeamView({ r, onViewActivity }: { r: R; onViewActivity: (repId: string)
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [invite, setInvite] = useState<{ email: string; link: string } | null>(null);
-  const [reset, setReset] = useState<{ id: string; link: string } | null>(null);
+  const [reset, setReset] = useState<{ id: string; sent?: string; link?: string } | null>(null);
   const [resetBusy, setResetBusy] = useState('');
+  const [invited, setInvited] = useState(''); // email we auto-sent a set-password link to
 
   useEffect(() => { r.loadTeam(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Default reset = Supabase emails them a link directly. No copy-paste needed.
   const doReset = async (rp: { id: string; email?: string }) => {
     if (!rp.email) return;
     setResetBusy(rp.id); setReset(null); setErr('');
+    const res = await r.emailPasswordReset(rp.email);
+    setResetBusy('');
+    if (!res.ok) { setErr(res.error || 'Could not send the reset email.'); return; }
+    setReset({ id: rp.id, sent: rp.email });
+  };
+
+  // Fallback for when their email is being difficult: mint a link to send yourself.
+  const doResetLink = async (rp: { id: string; email?: string }) => {
+    if (!rp.email) return;
+    setResetBusy(rp.id); setErr('');
     const res = await r.resetRepPassword(rp.email);
     setResetBusy('');
     if (!res.ok) { setErr(res.error || 'Could not create a reset link.'); return; }
@@ -662,13 +674,17 @@ function TeamView({ r, onViewActivity }: { r: R; onViewActivity: (repId: string)
   };
 
   const add = async () => {
-    setErr(''); setInvite(null);
+    setErr(''); setInvite(null); setInvited('');
     if (!email.trim()) { setErr('Enter an email.'); return; }
     setBusy(true);
-    const res = await r.inviteRep(email.trim(), name.trim() || email.trim(), number.trim() || undefined);
+    const em = email.trim();
+    const res = await r.inviteRep(em, name.trim() || em, number.trim() || undefined);
+    if (!res.ok) { setBusy(false); setErr(res.error || 'Could not add user.'); return; }
+    // Email them their set-password link automatically; keep the copyable link too.
+    const mail = await r.emailPasswordReset(em);
     setBusy(false);
-    if (!res.ok) { setErr(res.error || 'Could not add user.'); return; }
-    setInvite({ email: email.trim(), link: res.inviteLink || '' });
+    if (mail.ok) setInvited(em);
+    setInvite({ email: em, link: res.inviteLink || '' });
     setEmail(''); setName(''); setNumber('');
   };
 
@@ -687,11 +703,12 @@ function TeamView({ r, onViewActivity }: { r: R; onViewActivity: (repId: string)
         {err && <div className="team-err">{err}</div>}
         {invite && (
           <div className="team-invite">
-            <div className="ti-head">✓ <b>{invite.email}</b> created. Send them this link to set their password:</div>
+            <div className="ti-head">✓ <b>{invite.email}</b> created.{invited === invite.email ? ' We emailed them a link to set their password.' : ' Send them this link to set their password:'}</div>
             <div className="ti-link">
               <input readOnly value={invite.link} onFocus={(e) => e.currentTarget.select()} />
               <button className="btn sm" onClick={() => navigator.clipboard?.writeText(invite.link)}>Copy</button>
             </div>
+            {invited === invite.email && <div className="ti-sub">Backup link above in case the email doesn’t land.</div>}
           </div>
         )}
       </div>
@@ -722,11 +739,17 @@ function TeamView({ r, onViewActivity }: { r: R; onViewActivity: (repId: string)
             </div>
             {reset?.id === rp.id && (
               <div className="team-invite in-row">
-                <div className="ti-head">Send <b>{rp.name}</b> this link to reset their password:</div>
-                <div className="ti-link">
-                  <input readOnly value={reset.link} onFocus={(e) => e.currentTarget.select()} />
-                  <button className="btn sm" onClick={() => navigator.clipboard?.writeText(reset.link)}>Copy</button>
-                </div>
+                {reset.sent ? (
+                  <div className="ti-head">✓ Reset email sent to <b>{reset.sent}</b> — the link inside lets them set a new password. Didn’t land? <a className="ti-alt" onClick={() => doResetLink(rp)}>Copy a link instead</a>.</div>
+                ) : (
+                  <>
+                    <div className="ti-head">Send <b>{rp.name}</b> this link to reset their password:</div>
+                    <div className="ti-link">
+                      <input readOnly value={reset.link || ''} onFocus={(e) => e.currentTarget.select()} />
+                      <button className="btn sm" onClick={() => navigator.clipboard?.writeText(reset.link || '')}>Copy</button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
