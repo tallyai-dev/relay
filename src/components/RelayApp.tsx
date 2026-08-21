@@ -33,7 +33,7 @@ export default function RelayApp() {
         <TopBar r={r} onImport={() => setImportOpen(true)} />
         <div className="content">
           {r.view === 'leads' && <LeadsView r={r} onImport={() => setImportOpen(true)} />}
-          {r.view === 'staging' && <StagingView r={r} onImport={() => setImportOpen(true)} />}
+          {r.view === 'staging' && r.isAdmin && <StagingView r={r} onImport={() => setImportOpen(true)} />}
           {r.view === 'enrich' && <EnrichView r={r} />}
           {r.view === 'dialer' && <Dialer r={r} />}
           {r.view === 'inbox' && <Inbox r={r} />}
@@ -204,7 +204,7 @@ function Rail({ r }: { r: R }) {
         <span className="rail-lbl">Inbox</span>
       </button>
       {btn('leads', 'Pipeline', <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />, 'Leads')}
-      {btn('staging', 'Staging', <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />)}
+      {r.isAdmin && btn('staging', 'Staging', <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />)}
       {btn('enrich', 'Enrich', <path d="M13 3l2.3 6.2L22 11.5l-6.7 2.3L13 20l-2.3-6.2L4 11.5l6.7-2.3zM5 3v3M3.5 4.5h3" />)}
       {btn('cadences', 'Cadences', <path d="M3 12h4l3 8 4-16 3 8h4" />, 'Cadence')}
       {btn('reports', 'Reports', <path d="M3 3v18h18M8 15v3M13 9v9M18 5v13" />)}
@@ -295,7 +295,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   return (
     <section className="view on">
       <div className="page-head">
-        <div><h1>Salon prospecting — pipeline</h1><p>{r.activeLeads.length} active salons{r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
+        <div><h1>Salon prospecting — pipeline</h1><p>{r.activeLeads.length} active salons{r.isAdmin && r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
           {r.dueLeads.length > 0
@@ -385,7 +385,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
           <div className="empty-active">
             <div className="ea-title">No active leads yet</div>
             <div className="ea-sub">{r.stagedLeads.length > 0 ? `You have ${r.stagedLeads.length} leads waiting in staging.` : 'Import some leads to get started.'}</div>
-            {r.stagedLeads.length > 0
+            {r.isAdmin && r.stagedLeads.length > 0
               ? <button className="btn primary" onClick={() => r.setView('staging')}>Go to staging →</button>
               : <button className="btn primary" onClick={onImport}>{Icon.import}Import leads</button>}
           </div>
@@ -407,17 +407,21 @@ function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
   const pool = r.stagedLeads.length;
   const [amount, setAmount] = useState(25);
   const [cadenceId, setCadenceId] = useState(r.cadences[0]?.id || '');
+  const [assignTo, setAssignTo] = useState('');
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const amt = Math.min(amount, pool);
   const cad = r.cadences.find((c) => c.id === cadenceId) || r.cadences[0];
+  const roster = r.reps.filter((rp) => rp.active !== false);
+  const assignee = assignTo || r.me?.id || '';
+  const assigneeName = (id: string) => (id === r.me?.id ? 'you' : r.reps.find((rp) => rp.id === id)?.name || 'them');
 
   const deploy = async () => {
     if (amt <= 0 || !cad) return;
     setBusy(true);
-    const n = await r.deployLeads(amt, cad.id);
+    const n = await r.deployLeads(amt, cad.id, assignee || undefined);
     setBusy(false);
-    setFlash(`Deployed ${n} lead${n === 1 ? '' : 's'} into “${cad.name}”.`);
+    setFlash(`Deployed ${n} lead${n === 1 ? '' : 's'} into “${cad.name}” — assigned to ${assigneeName(assignee)}.`);
     setTimeout(() => setFlash(null), 4000);
   };
 
@@ -443,6 +447,16 @@ function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
                   {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
+              {roster.length > 0 && (
+                <div className="fld">
+                  <label>Assign to</label>
+                  <select value={assignee} onChange={(e) => setAssignTo(e.target.value)}>
+                    {roster.map((rp) => (
+                      <option key={rp.id} value={rp.id}>{rp.name}{rp.id === r.me?.id ? ' (you)' : ''}{rp.role === 'admin' ? ' · admin' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="fld">
                 <label>How many to deploy</label>
                 <div className="amt-row">

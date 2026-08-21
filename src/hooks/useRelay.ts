@@ -734,7 +734,7 @@ export function useRelay() {
   }, [enabled]);
 
   // ── Team (admin) ─────────────────────────────────────────────────────────────
-  const isAdmin = me?.role === 'admin';
+  const isAdmin = enabled ? me?.role === 'admin' : true; // demo mode shows everything
   const [repLeadCounts, setRepLeadCounts] = useState<Record<string, number>>({});
 
   // Refresh the roster + owned-lead counts for the Team screen.
@@ -777,13 +777,15 @@ export function useRelay() {
   const stagedLeads = leads.filter((l) => l.deployed === false);
   const activeLeads = leads.filter((l) => l.deployed !== false);
   // Deploy the N oldest staged leads into a cadence (they become due now).
-  const deployLeads = useCallback(async (count: number, cadenceId: string): Promise<number> => {
+  // assignToRepId puts the batch in that rep's name; defaults to the signed-in user.
+  const deployLeads = useCallback(async (count: number, cadenceId: string, assignToRepId?: string): Promise<number> => {
     const pool = leadsRef.current.filter((l) => l.deployed === false); // oldest-first (fetch order)
     const picked = pool.slice(0, Math.max(0, count)).map((l) => l.id);
     if (!picked.length) return 0;
+    const owner = assignToRepId || me?.id;
     const idSet = new Set(picked);
-    setLeads((prev) => prev.map((l) => (idSet.has(l.id) ? { ...l, deployed: true, cadenceId, cadencePos: 0, nextActionAt: undefined, lastTouch: 'New' } : l)));
-    if (enabled) { const moved = await deployStagedLeads(picked.length, cadenceId, me?.id); return moved.length || picked.length; }
+    setLeads((prev) => prev.map((l) => (idSet.has(l.id) ? { ...l, deployed: true, cadenceId, cadencePos: 0, nextActionAt: undefined, lastTouch: 'New', ownerRepId: owner } : l)));
+    if (enabled) { const moved = await deployStagedLeads(picked.length, cadenceId, owner); return moved.length || picked.length; }
     return picked.length;
   }, [enabled, me]);
 

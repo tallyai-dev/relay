@@ -504,18 +504,18 @@ export async function markCadenceComplete(leadId: string, name: string, iso: str
 }
 
 // Deploy the N oldest staged leads into a cadence: flip deployed=true, assign the
-// cadence, reset position, and make them due now. Returns the ids that moved.
-export async function deployStagedLeads(count: number, cadenceId: string, ownerRepId?: string): Promise<string[]> {
+// cadence, reset position, and make them due now. assignToRepId (when given) sets
+// owner_rep_id so the batch lands in that rep's name. Returns the ids that moved.
+export async function deployStagedLeads(count: number, cadenceId: string, assignToRepId?: string): Promise<string[]> {
   const sb = supabaseBrowser();
   if (!sb || count <= 0) return [];
-  let q = sb.from('leads').select('id').eq('deployed', false).order('created_at', { ascending: true }).limit(count);
-  if (ownerRepId) q = q.or(`owner_rep_id.eq.${ownerRepId},owner_rep_id.is.null`);
-  const { data: picked, error: selErr } = await q;
+  const { data: picked, error: selErr } = await sb.from('leads').select('id')
+    .eq('deployed', false).order('created_at', { ascending: true }).limit(count);
   if (selErr || !picked?.length) { if (selErr) console.error('deployStagedLeads select', selErr); return []; }
   const ids = picked.map((r: any) => r.id);
-  const { error } = await sb.from('leads')
-    .update({ deployed: true, cadence_id: cadenceId, cadence_pos: 0, next_action_at: null, cadence_completed_at: null, cadence_completed_name: null })
-    .in('id', ids);
+  const patch: Record<string, unknown> = { deployed: true, cadence_id: cadenceId, cadence_pos: 0, next_action_at: null, cadence_completed_at: null, cadence_completed_name: null };
+  if (assignToRepId) patch.owner_rep_id = assignToRepId;
+  const { error } = await sb.from('leads').update(patch).in('id', ids);
   if (error) { console.error('deployStagedLeads update', error); return []; }
   return ids;
 }
