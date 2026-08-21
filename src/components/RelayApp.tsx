@@ -6,6 +6,7 @@ import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT,
 import { placeCall, normalizePhone } from '@/lib/voice';
 import { openCalendly, CALENDLY_URL } from '@/lib/calendly';
 import { analyzeImport } from '@/lib/csv';
+import { fetchActivityFeed, type FeedActivity } from '@/lib/repo';
 
 type R = ReturnType<typeof useRelay>;
 
@@ -26,6 +27,7 @@ const Icon = {
 export default function RelayApp() {
   const r = useRelay();
   const [importOpen, setImportOpen] = useState(false);
+  const [reportsRep, setReportsRep] = useState(''); // '' = everyone (admin)
   return (
     <div className="app">
       <Rail r={r} />
@@ -38,8 +40,8 @@ export default function RelayApp() {
           {r.view === 'dialer' && <Dialer r={r} />}
           {r.view === 'inbox' && <Inbox r={r} />}
           {r.view === 'cadences' && <CadenceBuilder r={r} />}
-          {r.view === 'team' && <TeamView r={r} />}
-          {r.view === 'reports' && <Placeholder view={r.view} />}
+          {r.view === 'team' && <TeamView r={r} onViewActivity={(id) => { setReportsRep(id); r.setView('reports'); }} />}
+          {r.view === 'reports' && <ReportsView r={r} repFilter={reportsRep} setRepFilter={setReportsRep} />}
         </div>
       </div>
       {importOpen && <ImportModal r={r} onClose={() => setImportOpen(false)} />}
@@ -631,7 +633,7 @@ function EnrichView({ r }: { r: R }) {
 
 // Admin-only team management: add SDR logins, assign each a number, flip roles,
 // deactivate. Lead assignment happens from the Pipeline's bulk bar.
-function TeamView({ r }: { r: R }) {
+function TeamView({ r, onViewActivity }: { r: R; onViewActivity: (repId: string) => void }) {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [number, setNumber] = useState('');
@@ -701,6 +703,7 @@ function TeamView({ r }: { r: R }) {
               </label>
               <div className="team-leads"><b>{r.repLeadCounts[rp.id] || 0}</b><span>leads</span></div>
               <div className="team-actions">
+                <button className="btn sm" onClick={() => onViewActivity(rp.id)}>Activity →</button>
                 <button className="btn sm" disabled={resetBusy === rp.id} onClick={() => doReset(rp)}>{resetBusy === rp.id ? 'Linking…' : 'Reset password'}</button>
                 {rp.id !== r.me?.id && (
                   <>
@@ -726,15 +729,145 @@ function TeamView({ r }: { r: R }) {
   );
 }
 
-function Placeholder({ view }: { view: string }) {
-  const label: Record<string, string> = { inbox: 'Inbox', cadences: 'Cadence builder', reports: 'Reports', mobile: 'Mobile preview' };
+// ── Reports — who did what, filterable by rep ────────────────────────────────
+const RP_RANGES = [
+  { id: 'today', label: 'Today', days: 1 },
+  { id: '7d', label: '7 days', days: 7 },
+  { id: '30d', label: '30 days', days: 30 },
+] as const;
+type RpRange = (typeof RP_RANGES)[number]['id'];
+
+function ReportsView({ r, repFilter, setRepFilter }: { r: R; repFilter: string; setRepFilter: (v: string) => void }) {
+  const [range, setRange] = useState<RpRange>('7d');
+  const [rows, setRows] = useState<FeedActivity[]>([]);
+  const [loading, setLoading] = useState(false);
+  const days = RP_RANGES.find((x) => x.id === range)!.days;
+  const scope = r.isAdmin ? repFilter : (r.me?.id || ''); // reps only ever see themselves
+  const repName = (id?: string) => (id ? (r.reps.find((x) => x.id === id)?.name || '—') : '—');
+
+  const sinceIso = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - (days - 1));
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, [days]);
+
+  useEffect(() => {
+    if (!r.enabled) {
+      // Demo mode — flatten the local per-lead activity map.
+      const all: FeedActivity[] = Object.entries(r.activities).flatMap(([leadId, list]) =>
+        (list || []).map((a) => ({ ...a, salon: r.leadById(leadId)?.salon })));
+      setRows(all);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    fetchActivityFeed(sinceIso, scope || undefined).then((data) => {
+      if (!alive) return;
+      setRows(data);
+      setLoading(false);
+    });
+    return () => { alive = false; };
+  }, [r.enabled, sinceIso, scope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const stat = useMemo(() => {
+    const s = { calls: 0, connects: 0, texts: 0, emails: 0, demos: 0 };
+    for (const a of rows) {
+      if (a.kind === 'call') { s.calls++; if (a.disposition === 'connected' || a.disposition === 'booked') s.connects++; }
+      else if (a.kind === 'text' && a.direction !== 'in') s.texts++;
+      else if (a.kind === 'email' && a.direction !== 'in') s.emails++;
+      if (a.kind === 'book') s.demos++;
+    }
+    return s;
+  }, [rows]);
+
+  const chart = useMemo(() => {
+    const buckets: { label: string; calls: number; msgs: number }[] = [];
+    const idx = new Map<string, number>();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+      idx.set(d.toDateString(), buckets.length);
+      buckets.push({ label: days <= 7 ? d.toLocaleDateString(undefined, { weekday: 'short' }) : `${d.getMonth() + 1}/${d.getDate()}`, calls: 0, msgs: 0 });
+    }
+    for (const a of rows) {
+      if (!a.at) continue;
+      const i = idx.get(new Date(a.at).toDateString());
+      if (i == null) continue;
+      if (a.kind === 'call') buckets[i].calls++;
+      else if (a.kind === 'text' || a.kind === 'email') buckets[i].msgs++;
+    }
+    const max = Math.max(1, ...buckets.map((b) => b.calls + b.msgs));
+    return { buckets, max };
+  }, [rows, days]);
+
+  const icFor = (k: string) => (k === 'call' ? Icon.call : k === 'text' ? Icon.text : k === 'email' ? Icon.email : k === 'book' ? Icon.flow : Icon.text);
+
   return (
     <section className="view on">
-      <div className="page-head"><div><h1>{label[view]}</h1><p>Wired in the prototype — porting to React in Phase 2. Backend endpoints for this are already scaffolded.</p></div></div>
-      <div className="block" style={{ maxWidth: 620 }}>
-        <div className="bt" style={{ marginBottom: 8 }}>Phase 2</div>
-        This screen exists in the approved prototype (see relay-prototype.html). The data model, cadence engine, and Twilio/email
-        endpoints that power it are already built — this view is the next port.
+      <div className="page-head">
+        <div><h1>Reports</h1><p>{scope ? <>Activity for <b>{repName(scope)}</b></> : 'Activity across the whole team'} · last {days === 1 ? 'day' : `${days} days`}{loading ? ' · loading…' : ''}</p></div>
+        <div className="rp-controls">
+          {r.isAdmin && (
+            <select className="rp-rep-sel" value={repFilter} onChange={(e) => setRepFilter(e.target.value)}>
+              <option value="">Everyone</option>
+              {r.reps.map((rp) => <option key={rp.id} value={rp.id}>{rp.name}{rp.id === r.me?.id ? ' (you)' : ''}</option>)}
+            </select>
+          )}
+          <div className="rp-range">
+            {RP_RANGES.map((x) => <button key={x.id} className={range === x.id ? 'on' : ''} onClick={() => setRange(x.id)}>{x.label}</button>)}
+          </div>
+        </div>
+      </div>
+
+      <div className="rp-stats">
+        <div className="rp-stat"><span className="n">{stat.calls}</span><span className="l">Calls</span></div>
+        <div className="rp-stat"><span className="n">{stat.connects}</span><span className="l">Connects</span></div>
+        <div className="rp-stat"><span className="n">{stat.texts}</span><span className="l">Texts</span></div>
+        <div className="rp-stat"><span className="n">{stat.emails}</span><span className="l">Emails</span></div>
+        <div className="rp-stat hot"><span className="n">{stat.demos}</span><span className="l">Demos booked</span></div>
+      </div>
+
+      {days > 1 && (
+        <div className="block rp-chart-block">
+          <div className="bt">Daily activity <span className="rp-legend"><i className="c" /> calls <i className="m" /> texts + emails</span></div>
+          <div className="rp-chart">
+            {chart.buckets.map((b, i) => (
+              <div key={i} className="rp-col" title={`${b.label}: ${b.calls} calls, ${b.msgs} messages`}>
+                <div className="rp-bars">
+                  <div className="bar m" style={{ height: `${(b.msgs / chart.max) * 100}%` }} />
+                  <div className="bar c" style={{ height: `${(b.calls / chart.max) * 100}%` }} />
+                </div>
+                <div className="rp-lbl">{b.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="block rp-feed-block">
+        <div className="bt">Activity feed {rows.length > 0 && <span className="rp-count">{rows.length}</span>}</div>
+        {rows.length === 0 ? (
+          <div className="muted" style={{ padding: 16 }}>{loading ? 'Loading…' : 'No activity in this window yet.'}</div>
+        ) : (
+          <div className="rp-feed">
+            {rows.slice(0, 120).map((a) => (
+              <div key={a.id} className="rp-row">
+                <div className={`rp-ic k-${a.kind}`}>{icFor(a.kind)}</div>
+                <div className="rp-main">
+                  <div className="rp-top">
+                    <b>{a.ty}</b>
+                    {a.salon && <a className="rp-salon" onClick={() => { r.setActiveLeadId(a.leadId); r.setView('leads'); }}>{a.salon}</a>}
+                    {!scope && r.isAdmin && a.repId && <span className="rp-who">{repName(a.repId)}</span>}
+                    <span className="rp-when">{a.time}</span>
+                  </div>
+                  {(a.aiNote || a.ownNote || a.body) && <div className="rp-note">{a.aiNote || a.ownNote || a.body}</div>}
+                  {a.recordingUrl && <audio className="rp-audio" controls preload="none" src={a.recordingUrl} />}
+                </div>
+              </div>
+            ))}
+            {rows.length > 120 && <div className="muted" style={{ padding: '10px 14px' }}>Showing the latest 120 of {rows.length}.</div>}
+          </div>
+        )}
       </div>
     </section>
   );

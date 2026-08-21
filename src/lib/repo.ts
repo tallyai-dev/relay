@@ -241,6 +241,23 @@ export async function fetchActivities(leadId: string): Promise<Activity[]> {
   return (data || []).map(rowToActivity);
 }
 
+// Cross-lead activity feed for the Reports screen / Team drill-in. Admins see
+// everyone (RLS); pass repId to scope to one rep's work. Joins the salon name.
+export type FeedActivity = Activity & { salon?: string };
+export async function fetchActivityFeed(sinceIso: string, repId?: string, limit = 500): Promise<FeedActivity[]> {
+  const sb = supabaseBrowser();
+  if (!sb) return [];
+  let q = sb.from('activities')
+    .select('*, leads(salon)')
+    .gte('created_at', sinceIso)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (repId) q = q.eq('rep_id', repId);
+  const { data, error } = await q;
+  if (error) { console.error('fetchActivityFeed', error); return []; }
+  return (data || []).map((r: any) => ({ ...rowToActivity(r), salon: r.leads?.salon || undefined }));
+}
+
 // Friendly timeline label for a persisted activity (the fancy "· ⚡Flow" labels
 // only live in-session; a reloaded row rebuilds a readable one from its fields).
 const DISPO_TY: Record<string, string> = {
@@ -269,6 +286,8 @@ function rowToActivity(r: any): Activity {
     disposition: r.disposition || undefined,
     ty: activityTy(r),
     time: new Date(r.created_at).toLocaleString(),
+    at: r.created_at,
+    repId: r.rep_id || undefined,
     ai: !!r.ai_note,
     aiNote: r.ai_note || undefined,
     ownNote: r.own_note || undefined,
@@ -294,7 +313,7 @@ export function subscribeActivities(leadId: string, onChange: (a: Activity) => v
 
 export async function insertActivity(
   leadId: string,
-  a: { id?: string; kind: string; direction?: string; disposition?: string; aiNote?: string; ownNote?: string; body?: string }
+  a: { id?: string; kind: string; direction?: string; disposition?: string; aiNote?: string; ownNote?: string; body?: string; repId?: string }
 ): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
@@ -306,6 +325,7 @@ export async function insertActivity(
     ai_note: a.aiNote,
     own_note: a.ownNote,
     body: a.body,
+    rep_id: a.repId ?? null, // who did it — powers the admin Team/Reports views
   };
   if (a.id) row.id = a.id; // share the client id so realtime echoes de-duplicate
   const { error } = await sb.from('activities').insert(row);

@@ -210,6 +210,7 @@ export function useRelay() {
         id, // share the id so the realtime echo merges instead of duplicating
         kind: a.kind, direction: a.direction, disposition: a.disposition,
         aiNote: a.aiNote, ownNote: a.ownNote, body: a.body,
+        repId: meRef.current?.id, // stamp who did it for the Team/Reports views
       });
     }
     return id;

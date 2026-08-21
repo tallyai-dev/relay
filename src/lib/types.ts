@@ -80,6 +80,8 @@ export interface Activity {
   disposition?: Disposition;
   ty: string;      // display label, e.g. "Call — connected"
   time: string;    // display time
+  at?: string;     // ISO created_at (set on rows loaded from the DB)
+  repId?: string;  // who did it (powers the admin Team/Reports views)
   ai?: boolean;    // show AI-summary chip
   aiNote?: string;
   ownNote?: string;
