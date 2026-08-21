@@ -285,14 +285,19 @@ export function useRelay() {
   }, [enabled]);
 
   // ── Flow control ───────────────────────────────────────────────────────────
-  // Build the session queue from the rep's current book (RLS already scoped it).
+  // "My work" = my leads + the unassigned pool. RLS scopes reps to exactly that,
+  // but admins can see EVERY lead — without this filter another rep's assigned
+  // leads would leak into the admin's session queue.
+  const isMyWork = useCallback((l: Lead) => !l.ownerRepId || l.ownerRepId === meRef.current?.id, []);
+
+  // Build the session queue from the rep's current book.
   const startFlow = useCallback(async (onlyIds?: string[]) => {
     const idSet = onlyIds ? new Set(onlyIds) : null;
     // Today's worklist = only salons with something DUE (or overdue). Skips
-    // staged, won, removed (cold), completed, and anything scheduled for a
-    // future day. Most-overdue first so backlog surfaces at the top.
+    // staged, won, removed (cold), completed, anything scheduled for a future
+    // day, and anything assigned to someone else. Most-overdue first.
     const book = leadsRef.current
-      .filter((l) => leadIsDue(l))
+      .filter((l) => leadIsDue(l) && isMyWork(l))
       .filter((l) => !idSet || idSet.has(l.id))
       .sort((a, b) => {
         // Warm leads (opened/clicked an email) come first, then most-overdue.
@@ -847,7 +852,7 @@ export function useRelay() {
   }, [enabled, addActivity]);
 
   // ── Due-today scheduler ──────────────────────────────────────────────────────
-  const dueLeads = leads.filter(leadIsDue).sort((a, b) => {
+  const dueLeads = leads.filter((l) => leadIsDue(l) && (!l.ownerRepId || l.ownerRepId === me?.id)).sort((a, b) => {
     const wa = warmLeadIds.has(a.id) ? 0 : 1;
     const wb = warmLeadIds.has(b.id) ? 0 : 1;
     if (wa !== wb) return wa - wb;
@@ -855,7 +860,7 @@ export function useRelay() {
     const tb = b.nextActionAt ? new Date(b.nextActionAt).getTime() : startOfToday();
     return ta - tb;
   });
-  const scheduledLeads = leads.filter(leadIsScheduled);
+  const scheduledLeads = leads.filter((l) => leadIsScheduled(l) && (!l.ownerRepId || l.ownerRepId === me?.id));
   const startDueFlow = useCallback(() => startFlow(dueLeads.map((l) => l.id)), [startFlow, dueLeads]);
   // Manually snooze/reschedule a lead N days out (days<=0 clears → due now).
   const snoozeLead = useCallback((leadId: string, days: number) => {
