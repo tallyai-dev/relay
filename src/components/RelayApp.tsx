@@ -234,6 +234,13 @@ function TopBar({ r, onImport }: { r: R; onImport: () => void }) {
       <div className="grow" />
       {!r.enabled && <span className="demo-flag" title="No Supabase configured — running on local demo data">Demo mode</span>}
       {r.enabled && r.me && <span className="demo-flag" style={{ background: r.me.role === 'admin' ? 'var(--accent-soft)' : '#eef2f8', color: r.me.role === 'admin' ? 'var(--accent-ink)' : 'var(--ink2)' }} title={r.me.email}>{r.me.name} · {r.me.role}</span>}
+      {r.isAdmin && r.reps.length > 1 && (
+        <select className={`book-sel ${r.book !== 'mine' ? 'away' : ''}`} value={r.book} onChange={(e) => r.setBook(e.target.value)} title="Whose book the pipeline and queue show">
+          <option value="mine">My book</option>
+          {r.reps.filter((rp) => rp.id !== r.me?.id).map((rp) => <option key={rp.id} value={rp.id}>{rp.name}’s book</option>)}
+          <option value="all">Everyone</option>
+        </select>
+      )}
       <button className="btn tb-import" onClick={onImport}>{Icon.import}<span className="lbl">Import leads</span></button>
       <button className="btn flowbtn" onClick={() => r.startFlow()}>{Icon.flow}<span className="lbl">Flow Mode</span></button>
       {r.enabled && <button className="btn tb-signout" onClick={r.signOut} title="Sign out"><span className="lbl">Sign out</span></button>}
@@ -1714,6 +1721,38 @@ function BranchEditor({ step, open, onToggle, onSet }: { step: CadenceStep; open
   );
 }
 
+// One-click "move every lead on this cadence to another one" (admin). Moved
+// leads restart at step 1 and become due today.
+function MoveCadenceBar({ r, fromId, count }: { r: R; fromId: string; count: number }) {
+  const [to, setTo] = useState('');
+  const [flash, setFlash] = useState('');
+  const others = r.cadences.filter((c) => c.id !== fromId);
+  const doMove = () => {
+    if (!to) return;
+    const nm = r.cadences.find((c) => c.id === to)?.name || '';
+    const n = r.moveCadenceLeads(fromId, to);
+    setTo('');
+    setFlash(`Moved ${n} lead${n === 1 ? '' : 's'} to “${nm}” — restarted at step 1, due today.`);
+    setTimeout(() => setFlash(''), 6000);
+  };
+  return (
+    <div className="cad-move">
+      {flash ? <span className="cm-flash">✓ {flash}</span> : (
+        <>
+          <span className="cm-n"><b>{count}</b> lead{count === 1 ? '' : 's'} currently on this cadence</span>
+          <span className="cm-sep">·</span>
+          <label>Move all to</label>
+          <select value={to} onChange={(e) => setTo(e.target.value)}>
+            <option value="">Choose cadence…</option>
+            {others.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button className="btn sm" disabled={!to} onClick={doMove}>Move {count}</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function CadenceBuilder({ r }: { r: R }) {
   const [selId, setSelId] = useState<string>(r.cadences[0]?.id || '');
   const [draft, setDraft] = useState<Cadence | null>(null);
@@ -1779,6 +1818,9 @@ function CadenceBuilder({ r }: { r: R }) {
                 <button className="btn primary" onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}</button>
               </div>
             </div>
+            {r.isAdmin && r.cadences.length > 1 && usedBy(draft.id) > 0 && (
+              <MoveCadenceBar key={draft.id} r={r} fromId={draft.id} count={usedBy(draft.id)} />
+            )}
 
             <div className="cad-steps">
               {draft.steps.map((s, i) => (

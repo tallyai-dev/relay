@@ -285,19 +285,28 @@ export function useRelay() {
   }, [enabled]);
 
   // ── Flow control ───────────────────────────────────────────────────────────
-  // "My work" = my leads + the unassigned pool. RLS scopes reps to exactly that,
-  // but admins can see EVERY lead — without this filter another rep's assigned
-  // leads would leak into the admin's session queue.
-  const isMyWork = useCallback((l: Lead) => !l.ownerRepId || l.ownerRepId === meRef.current?.id, []);
+  // Which book the queue + pipeline show: your own ('mine'), one rep's (their
+  // id), or the whole team ('all'). Admins can toggle it from the top bar; reps
+  // always work their own book (RLS scopes their data to that anyway). A book is
+  // the rep's assigned leads plus the unassigned pool.
+  const [book, setBook] = useState<'mine' | 'all' | string>('mine');
+  const bookRef = useRef(book);
+  bookRef.current = book;
+  const bookMatch = useCallback((l: Lead) => {
+    const bf = bookRef.current;
+    if (bf === 'all') return true;
+    const id = bf === 'mine' ? meRef.current?.id : bf;
+    return !l.ownerRepId || l.ownerRepId === id;
+  }, []);
 
-  // Build the session queue from the rep's current book.
+  // Build the session queue from the current book.
   const startFlow = useCallback(async (onlyIds?: string[]) => {
     const idSet = onlyIds ? new Set(onlyIds) : null;
     // Today's worklist = only salons with something DUE (or overdue). Skips
     // staged, won, removed (cold), completed, anything scheduled for a future
-    // day, and anything assigned to someone else. Most-overdue first.
-    const book = leadsRef.current
-      .filter((l) => leadIsDue(l) && isMyWork(l))
+    // day, and anything outside the current book. Most-overdue first.
+    const worklist = leadsRef.current
+      .filter((l) => leadIsDue(l) && bookMatch(l))
       .filter((l) => !idSet || idSet.has(l.id))
       .sort((a, b) => {
         // Warm leads (opened/clicked an email) come first, then most-overdue.
@@ -306,7 +315,7 @@ export function useRelay() {
         if (wa !== wb) return wa - wb;
         return (a.nextActionAt ? new Date(a.nextActionAt).getTime() : startOfToday()) - (b.nextActionAt ? new Date(b.nextActionAt).getTime() : startOfToday());
       });
-    if (!book.length) {
+    if (!worklist.length) {
       // Nothing due — show the "all caught up" screen instead of a stale queue.
       setFlow((f) => ({ ...f, on: true, done: true, queue: [], pos: 0, phase: 'action', notice: null }));
       setView('dialer');
@@ -318,9 +327,9 @@ export function useRelay() {
     // DB; demo mode counts the activities already in memory.
     let progress: Record<string, number> = {};
     if (enabled) {
-      progress = await fetchCadenceProgress(book.map((l) => l.id));
+      progress = await fetchCadenceProgress(worklist.map((l) => l.id));
     } else {
-      for (const l of book) {
+      for (const l of worklist) {
         progress[l.id] = (activitiesRef.current[l.id] || []).filter(
           (a) => (a.kind === 'call' || a.kind === 'book' || a.kind === 'text' || a.kind === 'email') && a.direction !== 'in'
         ).length;
@@ -328,7 +337,7 @@ export function useRelay() {
     }
 
     const resumeStep: Record<string, number> = {};
-    const queue: QueueItem[] = book.map((l) => {
+    const queue: QueueItem[] = worklist.map((l) => {
       // Run the lead's assigned cadence (its call/text/email steps, skipping waits);
       // fall back to the stage-based default plan when no cadence is set. `steps`
       // stays aligned with `plan` so each call can read its branch rules.
@@ -739,6 +748,14 @@ export function useRelay() {
     if (enabled) bulkAssignCadence(ids, cadenceId);
   }, [enabled]);
 
+  // Move EVERY lead currently on one cadence over to another (staged included).
+  // Returns how many moved.
+  const moveCadenceLeads = useCallback((fromCadenceId: string, toCadenceId: string): number => {
+    const ids = leadsRef.current.filter((l) => l.cadenceId === fromCadenceId).map((l) => l.id);
+    if (ids.length) assignCadenceMany(ids, toCadenceId);
+    return ids.length;
+  }, [assignCadenceMany]);
+
   // ── Team (admin) ─────────────────────────────────────────────────────────────
   const isAdmin = enabled ? me?.role === 'admin' : true; // demo mode shows everything
   const [repLeadCounts, setRepLeadCounts] = useState<Record<string, number>>({});
@@ -781,7 +798,7 @@ export function useRelay() {
 
   // ── Staging pool ─────────────────────────────────────────────────────────────
   const stagedLeads = leads.filter((l) => l.deployed === false);
-  const activeLeads = leads.filter((l) => l.deployed !== false);
+  const activeLeads = leads.filter((l) => l.deployed !== false && bookMatch(l));
   // Deploy the N oldest staged leads into a cadence (they become due now).
   // assignToRepId puts the batch in that rep's name; defaults to the signed-in user.
   const deployLeads = useCallback(async (count: number, cadenceId: string, assignToRepId?: string): Promise<number> => {
@@ -852,7 +869,7 @@ export function useRelay() {
   }, [enabled, addActivity]);
 
   // ── Due-today scheduler ──────────────────────────────────────────────────────
-  const dueLeads = leads.filter((l) => leadIsDue(l) && (!l.ownerRepId || l.ownerRepId === me?.id)).sort((a, b) => {
+  const dueLeads = leads.filter((l) => leadIsDue(l) && bookMatch(l)).sort((a, b) => {
     const wa = warmLeadIds.has(a.id) ? 0 : 1;
     const wb = warmLeadIds.has(b.id) ? 0 : 1;
     if (wa !== wb) return wa - wb;
@@ -860,7 +877,7 @@ export function useRelay() {
     const tb = b.nextActionAt ? new Date(b.nextActionAt).getTime() : startOfToday();
     return ta - tb;
   });
-  const scheduledLeads = leads.filter((l) => leadIsScheduled(l) && (!l.ownerRepId || l.ownerRepId === me?.id));
+  const scheduledLeads = leads.filter((l) => leadIsScheduled(l) && bookMatch(l));
   const startDueFlow = useCallback(() => startFlow(dueLeads.map((l) => l.id)), [startFlow, dueLeads]);
   // Manually snooze/reschedule a lead N days out (days<=0 clears → due now).
   const snoozeLead = useCallback((leadId: string, days: number) => {
@@ -927,7 +944,8 @@ export function useRelay() {
     addActivity, setStage,
     messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, sendThreadReply, retrySend, threadKeyForMessage,
     activeCall, startCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
-    cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany,
+    cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany, moveCadenceLeads,
+    book, setBook,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
     isAdmin, repLeadCounts, loadTeam, inviteRep, resetRepPassword, updateRep, assignOwnerMany,
