@@ -157,6 +157,10 @@
   .team-actions{display:flex;gap:6px}
   .row-owner{font-size:9.5px;font-weight:700;color:#3538cd;background:#eef2ff;border:1px solid #c7d0fe;border-radius:999px;padding:1px 7px;margin-left:6px}
   .auth-note{font-size:12.5px;color:#0a7d3a;background:#e6f6ec;border:1px solid #bfe6cd;border-radius:8px;padding:7px 10px}
+  .qv-call{display:inline-flex;align-items:center;gap:6px;border:none;background:none;padding:0;cursor:pointer;
+    color:#1d5fbf;font-weight:700;font-size:inherit;font-family:inherit}
+  .qv-call:hover{text-decoration:underline}
+  .qv-call svg{width:13px;height:13px}
   .btn.book-demo{background:#eef2ff;border-color:#c7d0fe;color:#3538cd;font-weight:700}
   .btn.book-demo:hover{background:#e0e7ff}
   @media(max-width:760px){

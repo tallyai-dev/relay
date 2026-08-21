@@ -407,6 +407,14 @@ export function useRelay() {
     setFlow((f) => ({ ...f, actionCount: f.actionCount + 1, phase: 'incall', notice: null }));
   }, [current]);
 
+  // Manual click-to-call from a lead card's phone number: jump to that lead in
+  // the dialer and open the call panel (which places the real call).
+  const startCall = useCallback((leadId: string) => {
+    setActiveLeadId(leadId);
+    setView('dialer');
+    setActiveCall({ leadId, direction: 'out', viaFlow: false });
+  }, []);
+
   // Called by the live CallPanel's "End & log" (both outbound-flow and inbound).
   const endCall = useCallback(() => {
     const ac = activeCall;
@@ -910,7 +918,7 @@ export function useRelay() {
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow, sendLeadEmail,
     addActivity, setStage,
     messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, sendThreadReply, retrySend, threadKeyForMessage,
-    activeCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
+    activeCall, startCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,

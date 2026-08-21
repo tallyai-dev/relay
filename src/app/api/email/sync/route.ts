@@ -23,8 +23,12 @@ async function sync() {
   for (const rep of replies) {
     if (!rep.from || seen.has(rep.id)) continue;
     const { data: lead } = await db.from('leads').select('id').ilike('email', rep.from).maybeSingle();
+    // Only pull mail that's part of a Relay conversation — the sender must be a
+    // lead in the book. Newsletters, DMARC reports, and service mail stay in
+    // Gmail instead of cluttering the Relay Inbox.
+    if (!lead?.id) continue;
     const { error } = await db.from('messages').insert({
-      lead_id: lead?.id ?? null,
+      lead_id: lead.id,
       channel: 'email',
       direction: 'in',
       from_addr: rep.from,

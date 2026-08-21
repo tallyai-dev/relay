@@ -1166,7 +1166,9 @@ function Dialer({ r }: { r: R }) {
           )}
 
           <div className="qgrid">
-            <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone || <span className="muted">—</span>}</div></div>
+            <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone
+              ? <button className="qv-call" title={`Call ${lead.phone}`} onClick={() => r.startCall(lead.id)}>{Icon.call} {lead.phone}</button>
+              : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Email</div><div className="qv">{lead.email ? <a className="qv-link" href={`mailto:${lead.email}`}>{lead.email}</a> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Booking</div><div className="qv">{lead.bookingSystem ? <span className="book-chip">{lead.bookingSystem}</span> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Website</div><div className="qv">{lead.website ? <a className="qv-link" href={`https://${lead.website}`} target="_blank" rel="noreferrer">{lead.website}</a> : <span className="muted">—</span>}</div></div>
