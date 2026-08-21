@@ -7,6 +7,7 @@ import { placeCall, normalizePhone } from '@/lib/voice';
 import { openCalendly, CALENDLY_URL } from '@/lib/calendly';
 import { analyzeImport } from '@/lib/csv';
 import { fetchActivityFeed, type FeedActivity } from '@/lib/repo';
+import { BoltMark } from '@/components/Logo';
 
 type R = ReturnType<typeof useRelay>;
 
@@ -198,7 +199,7 @@ function Rail({ r }: { r: R }) {
   );
   return (
     <nav className="rail">
-      <div className="logo">R</div>
+      <div className="logo"><BoltMark size={32} /></div>
       {btn('dialer', 'Workspace', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />, 'Dialer')}
       <button className={r.view === 'inbox' ? 'on' : ''} title="Inbox" onClick={() => r.setView('inbox')} style={{ position: 'relative' }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16v16H4z" /><path d="M4 9h5l2 3h2l2-3h5" /></svg>

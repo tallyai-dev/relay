@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { BoltMark } from '@/components/Logo';
 
 // Public "Book a demo" capture page. Salons land here from an email/text link;
 // submissions POST to /api/leads/capture and appear in Relay as hot inbound leads.
@@ -27,7 +28,7 @@ export default function BookDemo() {
   return (
     <div className="book-wrap">
       <div className="book-card">
-        <div className="book-logo">R</div>
+        <div className="book-logo"><BoltMark size={44} /></div>
         {state === 'done' ? (
           <div className="book-done">
             <div className="book-tick">✓</div>

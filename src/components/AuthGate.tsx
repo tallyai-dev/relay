@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { supabaseBrowser, hasSupabase } from '@/lib/supabase';
+import { BoltMark } from '@/components/Logo';
 
 // Gates the app behind Supabase Auth when configured. When Supabase is not
 // configured (local dev with no env), renders children directly in demo mode.
@@ -73,7 +74,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <div className="auth-wrap">
         <form className="auth-card" onSubmit={setNewPassword}>
-          <div className="auth-logo">R</div>
+          <div className="auth-logo"><BoltMark size={44} /></div>
           <h1>Set your password</h1>
           <p className="auth-sub">Choose a password to finish setting up your Relay account.</p>
           <label>New password
@@ -92,7 +93,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   return (
     <div className="auth-wrap">
       <form className="auth-card" onSubmit={submit}>
-        <div className="auth-logo">R</div>
+        <div className="auth-logo"><BoltMark size={44} /></div>
         <h1>Relay</h1>
         <p className="auth-sub">{mode === 'signin' ? 'Sign in to your book' : mode === 'signup' ? 'Create your account' : 'Enter your email and we’ll send you a link to set a new password.'}</p>
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
