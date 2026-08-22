@@ -1248,3 +1248,17 @@ tr.row-sel td{background:var(--accent-soft,#e6efff)}
 
 /* Bolt Bubble mark replaces the blue "R" tiles — let the mark be the logo */
 .rail .logo, .auth-logo, .book-logo { background: transparent !important; box-shadow: none !important; }
+
+/* Bigger Bolt Bubble in the rail (Seth, 8/22) — the mark deserves the space */
+.rail .logo { width: 44px; height: 44px; }
+
+/* Interactive cold-call script — response chips */
+.sp-sub { font-size: 11px; color: var(--ink3, #9aa8a0); }
+.sp-restart { margin-left: auto; }
+.sp-choices { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.sp-chip { border: 1.5px solid var(--line); background: #fff; border-radius: 20px; padding: 7px 13px; font-size: 12px; font-weight: 600; color: var(--ink2); cursor: pointer; text-align: left; transition: border-color .12s, opacity .12s; }
+.sp-chip:hover { border-color: var(--accent, #2563eb); color: var(--accent-ink, #2563eb); }
+.sp-chip.on { background: var(--accent, #2563eb); border-color: var(--accent, #2563eb); color: #fff; }
+.sp-chip.dim { opacity: 0.4; }
+.sp-book { margin-top: 10px; }
+.sp-end { margin-top: 8px; font-style: italic; }

@@ -199,7 +199,7 @@ function Rail({ r }: { r: R }) {
   );
   return (
     <nav className="rail">
-      <div className="logo"><BoltMark size={32} /></div>
+      <div className="logo"><BoltMark size={42} tight /></div>
       {btn('dialer', 'Workspace', <path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3 19.5 19.5 0 01-6-6 19.8 19.8 0 01-3-8.6A2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.4c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z" />, 'Dialer')}
       <button className={r.view === 'inbox' ? 'on' : ''} title="Inbox" onClick={() => r.setView('inbox')} style={{ position: 'relative' }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16v16H4z" /><path d="M4 9h5l2 3h2l2-3h5" /></svg>
@@ -1450,37 +1450,168 @@ function TimelineItem({ h }: { h: Activity }) {
   );
 }
 
+// ── Interactive cold-call script — tap how the prospect responds, it branches ─
+// A tiny state machine: each node is a script beat; its choice chips reveal the
+// next beat below (the path stays visible so you can read back up the call).
+// New lead in the dialer = fresh script from the top.
+type ScriptNode = {
+  title: string;
+  lines: { who: 'you' | 'them'; text: string }[];
+  ask?: string;                                    // the green closing ask
+  choices?: { label: string; to: string }[];       // how they responded
+  book?: boolean;                                  // offer 📅 book-the-Zoom
+  end?: string;                                    // wrap-up coaching note
+};
+const SCRIPT_NODES: Record<string, ScriptNode> = {
+  open: {
+    title: 'The open',
+    lines: [
+      { who: 'you', text: 'Hey, what time do you close tonight?' },
+      { who: 'them', text: '[answer]' },
+      { who: 'you', text: 'Nice. When a new client calls after hours, or while you’re in the chair — does that just go to voicemail?' },
+      { who: 'them', text: '[answer]' },
+      { who: 'you', text: 'Got it. I’m curious — have you guys ever looked at a virtual receptionist that just catches the calls you can’t get to?' },
+    ],
+    choices: [
+      { label: 'Owner — “yes / we’ve thought about it”', to: 'owner_yes' },
+      { label: 'Owner — “no / not really”', to: 'owner_no' },
+      { label: 'Not the person', to: 'not_person' },
+    ],
+  },
+  owner_yes: {
+    title: 'Owner · open to it',
+    lines: [
+      { who: 'you', text: 'Cool. Missed calls get picked up before voicemail by our virtual receptionist — she knows your salon and can get the client a booking link. That’s been helping salons turn missed calls into busier schedules for their commission team.' },
+    ],
+    ask: 'Are you opposed to taking a look on a quick 15-minute Zoom call right now?',
+    book: true,
+    choices: [{ label: 'They pushed back', to: 'owner_no' }],
+  },
+  owner_no: {
+    title: 'Owner · not really',
+    lines: [
+      { who: 'you', text: 'No worries. Wasn’t trying to sell you. I only ask because the salons that try it usually see those missed calls turn into booked appointments for the commission team.' },
+    ],
+    ask: 'Is there another day that would make more sense to take a quick look?',
+    book: true,
+    end: 'If they name a day, book it on the spot — otherwise snooze the lead to that day so it comes back due.',
+  },
+  not_person: {
+    title: 'Not the person',
+    lines: [{ who: 'you', text: 'No worries. Are you a commission stylist, or do you rent a booth?' }],
+    choices: [
+      { label: 'Commission stylist', to: 'commission' },
+      { label: 'Booth renter', to: 'booth' },
+    ],
+  },
+  commission: {
+    title: 'Commission stylist',
+    lines: [{ who: 'you', text: 'Gotcha. Do you ever have gaps the owner would want to fill for the team?' }],
+    choices: [
+      { label: '“Yes, we get gaps”', to: 'commission_gaps' },
+      { label: '“No / we stay booked”', to: 'commission_booked' },
+    ],
+  },
+  commission_gaps: {
+    title: 'Has gaps → route to owner',
+    lines: [],
+    ask: 'That’s usually where missed calls hurt. Is the owner the right person for a 15-minute Zoom, or who should I ask for?',
+    end: 'Get the owner’s name and the best time to reach them — drop it in the contact + a note, then snooze to that day.',
+  },
+  commission_booked: {
+    title: 'Stays booked → route to owner',
+    lines: [],
+    ask: 'Nice. Who handles the phones — the owner?',
+    end: 'Get the owner’s name — save it on the contact and call back asking for them.',
+  },
+  booth: {
+    title: 'Booth renter',
+    lines: [{ who: 'you', text: 'Do you book your own appointments?' }],
+    choices: [
+      { label: '“Yes, I book my own”', to: 'booth_own' },
+      { label: '“No — the salon books”', to: 'booth_salon' },
+    ],
+  },
+  booth_own: {
+    title: 'Books their own → pitch text-back',
+    lines: [
+      { who: 'you', text: 'When you miss a call mid-client, what happens today?' },
+      { who: 'them', text: '[answer]' },
+      { who: 'you', text: 'Got it. For booth renters we usually do something simpler than a full receptionist — missed-call text-back. You keep your same number. The second you miss a call, the client gets a text with your booking link so they book you instead of the next stylist. About 3 minutes to set up, $49 a month.' },
+    ],
+    ask: 'Are you opposed to taking a look on a quick 15-minute Zoom call right now?',
+    book: true,
+    choices: [{ label: 'They shut it down', to: 'booth_shutdown' }],
+  },
+  booth_shutdown: {
+    title: 'Shut it down · soft close',
+    lines: [
+      { who: 'you', text: 'No worries. Wasn’t trying to sell you. Most booth renters who try it just stop losing the clients that call while they’re with someone.' },
+    ],
+    ask: 'Is there another day that would make more sense to take a quick look?',
+    book: true,
+    end: 'If they name a day, book it — otherwise snooze the lead to that day.',
+  },
+  booth_salon: {
+    title: 'Salon books → route to owner',
+    lines: [],
+    ask: 'Owner’s probably better. Who should I ask for?',
+    end: 'Get the owner’s name — save it on the contact and call back asking for them.',
+  },
+};
+
 function ScriptPanel({ lead }: { lead: Lead }) {
+  const [path, setPath] = useState<string[]>(['open']);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { setPath(['open']); }, [lead.id]);          // fresh call, fresh script
+  useEffect(() => {
+    if (path.length > 1) bodyRef.current?.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [path]);
+  // Picking a response at step i prunes anything after it, so re-picking an
+  // earlier branch mid-call just rewrites the rest of the path.
+  const pick = (i: number, to: string) => setPath((p) => [...p.slice(0, i + 1), to]);
+  const bookName = lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name : lead.salon;
   return (
     <div className="ws-right">
-      <div className="rp-head"><div className="ic">{Icon.flow}</div><div><div className="nm">Discovery call script</div></div></div>
-      <div className="rp-body">
-
-        <div className="script-step"><div className="sn">01 — CLOSING TIME</div>
-          <span className="lbl">Casual open</span>
-          <div className="say">&quot;Hi, I was just wondering what time you guys close?&quot;</div>
-          <div className="aside">Let them answer.</div></div>
-
-        <div className="script-step"><div className="sn">02 — AFTER-HOURS</div>
-          <div className="say">&quot;Got it. So if I call after that… does it go to voicemail, or does someone still pick up?&quot;</div>
-          <div className="aside">Let them answer.</div>
-          <div className="branch"><span className="q">If they ask &ldquo;what is this about?&rdquo;</span>
-            <div className="say">&quot;I was calling to see how you&apos;re currently handling your overflow and after-hours calls.&quot;</div></div>
-        </div>
-
-        <div className="script-step"><div className="sn">03 — THE QUESTION</div>
-          <div className="aside">Match their answer, then land the same question:</div>
-          <div className="branch"><span className="q">&ldquo;They go to voicemail.&rdquo; &nbsp;/&nbsp; &ldquo;I answer them.&rdquo;</span>
-            <div className="say">&quot;I&apos;m not sure if this would be applicable, but… have you considered using a voice agent to help answer those calls? Have you seen the new voice technology out there?&quot;</div></div>
-          <div className="branch"><span className="q">&ldquo;I have someone who answers.&rdquo;</span>
-            <div className="say">&quot;Are you paying this person to be on call?&quot;</div>
-            <div className="say">&quot;…have you considered using a voice agent to help answer those calls? Have you seen the new voice technology out there?&quot;</div></div>
-        </div>
-
-        <div className="script-step ask"><div className="sn">04 — THE ASK · BOOK THE DEMO</div>
-          <div className="say">&quot;My goal isn&apos;t to sell you anything today. I actually put together a quick demo of how this would work for {lead.salon} — could we grab 15 minutes so I can walk you through it and you can hear it live? I&apos;ve got a couple of times open this week.&quot;</div>
-          <div className="aside">Book it on the spot — hit 📅 Book demo up top to lock the time in Calendly.</div></div>
-
+      <div className="rp-head">
+        <div className="ic">{Icon.flow}</div>
+        <div><div className="nm">Cold-call script</div><div className="sp-sub">Tap how they respond — it branches</div></div>
+        {path.length > 1 && <button className="btn sm sp-restart" onClick={() => setPath(['open'])}>↺ Restart</button>}
+      </div>
+      <div className="rp-body" ref={bodyRef}>
+        {path.map((id, i) => {
+          const n = SCRIPT_NODES[id];
+          if (!n) return null;
+          const chosen = path[i + 1];
+          return (
+            <div key={`${id}-${i}`} className="script-step">
+              <div className="sn">{String(i + 1).padStart(2, '0')} — {n.title.toUpperCase()}</div>
+              {n.lines.map((l, j) => (l.who === 'you'
+                ? <div key={j} className="say">&quot;{l.text}&quot;</div>
+                : <div key={j} className="aside">Them: {l.text} — let them talk.</div>))}
+              {n.ask && (
+                <div className="branch"><span className="q">The ask</span>
+                  <div className="say">&quot;{n.ask}&quot;</div></div>
+              )}
+              {n.book && !chosen && (
+                <button className="btn primary sm sp-book"
+                  onClick={() => openCalendly({ name: bookName, email: lead.email, leadId: lead.id })}>
+                  📅 They&apos;re in — book the Zoom
+                </button>
+              )}
+              {n.choices && (
+                <div className="sp-choices">
+                  {n.choices.map((c) => (
+                    <button key={c.to}
+                      className={`sp-chip ${chosen === c.to ? 'on' : chosen ? 'dim' : ''}`}
+                      onClick={() => pick(i, c.to)}>{c.label}</button>
+                  ))}
+                </div>
+              )}
+              {n.end && !chosen && <div className="aside sp-end">{n.end}</div>}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
