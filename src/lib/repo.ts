@@ -116,6 +116,7 @@ export async function signOut(): Promise<void> {
 }
 
 const DEFAULT_CADENCE = '11111111-1111-1111-1111-111111111111';
+export const INSTAGRAM_CADENCE = '22222222-2222-2222-2222-222222222222';
 
 function rowToLead(row: any): Lead {
   const cs = row.contacts || [];
@@ -129,6 +130,8 @@ function rowToLead(row: any): Lead {
     website: row.website || undefined,
     bookingSystem: row.booking_system || undefined,
     source: row.source || undefined,
+    handle: row.handle || undefined,
+    notes: row.notes || undefined,
     stage: row.stage as Stage,
     cadenceId: row.cadence_id || DEFAULT_CADENCE,
     cadencePos: row.cadence_pos ?? 0,
@@ -428,6 +431,9 @@ export interface ImportRow {
   email?: string;
   contactName?: string;
   role?: string;
+  handle?: string;
+  bookingSystem?: string;
+  notes?: string;
 }
 
 // ── Cadences (team-wide config; RLS: team_all) ──────────────────────────────
@@ -624,4 +630,72 @@ export async function bulkInsertLeads(rows: ImportRow[], ownerRepId?: string): P
     .filter((c: any) => c.name !== '—');
   if (contacts.length) await sb.from('contacts').insert(contacts);
   return (data || []).length;
+}
+
+// Import Instagram demo-requesters. Everything is tagged source='instagram' and
+// assigned to the importer. A row we can actually reach (phone or email) is
+// deployed straight onto the warm "Instagram" cadence; a row with no contact yet
+// lands in staging (deployed=false) so it shows up under "Needs enrichment"
+// instead of being texted into the void. Their DM / context is logged as an
+// activity so the do-not-dial notes travel with the lead.
+export interface IgImportResult { deployed: number; staged: number; total: number }
+export async function importInstagramLeads(rows: ImportRow[], ownerRepId?: string): Promise<IgImportResult> {
+  const sb = supabaseBrowser();
+  if (!sb) return { deployed: 0, staged: 0, total: 0 };
+  const emailOk = (e?: string) => !!(e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim()));
+  const prepared = rows
+    .filter((r) => r.salon?.trim())
+    .map((r) => {
+      const phone = toE164(r.phone) ?? (r.phone?.trim() || null);
+      const dialable = !!(phone || emailOk(r.email));
+      return { r, phone, dialable };
+    });
+
+  const payload = prepared.map(({ r, phone, dialable }) => ({
+    salon: r.salon.trim(),
+    city: r.city?.trim() || null,
+    phone,
+    email: emailOk(r.email) ? r.email!.trim() : null,
+    booking_system: r.bookingSystem?.trim() || null,
+    source: 'instagram',
+    handle: r.handle?.trim() || null,
+    notes: r.notes?.trim() || null,
+    stage: dialable ? 'working' : 'new',
+    cadence_id: INSTAGRAM_CADENCE,
+    cadence_pos: 0,
+    deployed: dialable, // reachable now → onto the cadence; else stays in staging
+    owner_rep_id: ownerRepId ?? null,
+  }));
+
+  const { data, error } = await sb.from('leads').insert(payload).select('id');
+  if (error) { console.error('importInstagramLeads', error); return { deployed: 0, staged: 0, total: 0 }; }
+  const ids = (data || []).map((d: any) => d.id);
+
+  const contacts = ids
+    .map((id: string, i: number) => ({
+      lead_id: id,
+      name: prepared[i].r.contactName?.trim() || prepared[i].r.handle?.trim() || '\u2014',
+      role: 'Owner',
+      phone: prepared[i].phone,
+      email: emailOk(prepared[i].r.email) ? prepared[i].r.email!.trim() : null,
+      is_primary: true,
+    }))
+    .filter((c: any) => c.name !== '\u2014');
+  if (contacts.length) await sb.from('contacts').insert(contacts);
+
+  const activities = ids.map((id: string, i: number) => {
+    const r = prepared[i].r;
+    const bits = [r.handle && ('DM from ' + r.handle), r.notes].filter(Boolean).join(' — ');
+    return {
+      lead_id: id,
+      kind: 'note',
+      direction: 'in',
+      ai_note: 'Instagram demo request.',
+      body: bits || 'Added from the Instagram warm-lead list.',
+    };
+  });
+  if (activities.length) await sb.from('activities').insert(activities);
+
+  const deployed = prepared.filter((p) => p.dialable).length;
+  return { deployed, staged: prepared.length - deployed, total: prepared.length };
 }

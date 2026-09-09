@@ -63,6 +63,7 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
   const [csv, setCsv] = useState('salon,city,phone,email,contact,role\nBella Salon,Denver CO,(303) 555-0101,hi@bella.com,Ana,Owner');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
+  const [igRes, setIgRes] = useState<{ deployed: number; staged: number; total: number } | null>(null);
   const [owner, setOwner] = useState<string>(r.me?.id || '');
   const [showAll, setShowAll] = useState(false);
   const [drag, setDrag] = useState(false);
@@ -91,11 +92,17 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
   const analysis = useMemo(() => (csv.trim() ? analyzeImport(csv, existing) : null), [csv, existing]);
   const s = analysis?.summary;
   const readyRows = analysis ? analysis.rows.filter((x) => x.status === 'ready') : [];
+  const igMode = !!analysis?.detected.find((d) => d.field === 'Instagram');
 
   const run = async () => {
     setBusy(true);
-    const n = await r.importCleanRows(readyRows, owner || r.me?.id);
-    setBusy(false); setDone(n);
+    if (igMode) {
+      const res = await r.importInstagramRows(readyRows, owner || r.me?.id);
+      setBusy(false); setIgRes(res); setDone(res.total);
+    } else {
+      const n = await r.importCleanRows(readyRows, owner || r.me?.id);
+      setBusy(false); setDone(n);
+    }
   };
 
   const rowsToShow = analysis ? (showAll ? analysis.rows : analysis.rows.slice(0, 8)) : [];
@@ -107,6 +114,14 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
         <div className="mb import-body">
           {done === null ? (
             <>
+              {igMode && (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '11px 13px', borderRadius: 12, marginBottom: 12, background: 'linear-gradient(105deg,#fbeaf3,#efeaf9)', border: '1px solid #f0d5e6' }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, background: 'linear-gradient(105deg,#F58529,#DD2A7B,#8134AF,#515BD4)' }} />
+                  <div style={{ fontSize: 12, color: '#5a3550', lineHeight: 1.5 }}>
+                    <b>Instagram warm import.</b> These get <b>source = instagram</b> and start on the <b>Instagram — warm demo</b> cadence. Salons you can reach (phone or email) go live now; ones with no contact yet wait under <b>Needs enrichment</b>. The first text is a draft you send from Flow — nothing auto-sends.
+                  </div>
+                </div>
+              )}
               <div className="import-hint">Upload a CSV file, or paste rows below. Columns are auto‑detected — phone numbers get cleaned up, bad emails dropped, and duplicates flagged before anything is imported.</div>
               <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" style={{ display: 'none' }}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) loadFile(f); e.target.value = ''; }} />
@@ -171,7 +186,11 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
           ) : (
             <div style={{ textAlign: 'center', padding: '18px 0' }}>
               <div className="success-tick">✓</div>
-              <div><span className="import-count">{done}</span> leads added to <b>staging</b>{r.enabled ? '' : ' (demo)'}. Duplicates and blanks were skipped. Deploy them into a cadence from the Staging tab when you’re ready to call.</div>
+              {igMode && igRes ? (
+                <div><span className="import-count">{igRes.deployed}</span> warm lead{igRes.deployed === 1 ? '' : 's'} live on the <b>Instagram — warm demo</b> cadence{igRes.staged > 0 ? <> · <b>{igRes.staged}</b> with no contact yet waiting under <b>Needs enrichment</b></> : ''}. First texts are drafts — send them from Flow.</div>
+              ) : (
+                <div><span className="import-count">{done}</span> leads added to <b>staging</b>{r.enabled ? '' : ' (demo)'}. Duplicates and blanks were skipped. Deploy them into a cadence from the Staging tab when you’re ready to call.</div>
+              )}
             </div>
           )}
         </div>
@@ -179,10 +198,10 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
           {done === null ? (
             <>
               <button className="btn" onClick={onClose}>Cancel</button>
-              <button className="btn primary" onClick={run} disabled={busy || readyRows.length === 0}>{busy ? 'Importing…' : `Import ${readyRows.length} new lead${readyRows.length === 1 ? '' : 's'}`}</button>
+              <button className="btn primary" onClick={run} disabled={busy || readyRows.length === 0}>{busy ? 'Importing…' : igMode ? `Add ${readyRows.length} Instagram lead${readyRows.length === 1 ? '' : 's'}` : `Import ${readyRows.length} new lead${readyRows.length === 1 ? '' : 's'}`}</button>
             </>
           ) : (
-            <button className="btn primary" onClick={() => { r.setView('staging'); onClose(); }}>Go to staging →</button>
+            <button className="btn primary" onClick={() => { r.setView(igMode ? 'leads' : 'staging'); onClose(); }}>{igMode ? 'Go to leads →' : 'Go to staging →'}</button>
           )}
         </div>
       </div>

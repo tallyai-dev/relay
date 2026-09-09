@@ -50,6 +50,9 @@ export interface AnalyzedRow {
   email?: string;   // only kept when valid
   contactName?: string;
   role?: string;
+  handle?: string;         // '@name' when the row came from Instagram
+  bookingSystem?: string;  // detected booking platform
+  notes?: string;          // enrichment context / their DM ask
   status: RowStatus;
   warnings: string[];
 }
@@ -67,6 +70,12 @@ const FIELD_ALIASES: Record<string, string[]> = {
   email: ['email', 'emailaddress', 'mail'],
   contactName: ['contact', 'contactname', 'owner', 'ownername', 'firstname', 'fullname', 'person'],
   role: ['role', 'title', 'position'],
+  handle: ['handle', 'ighandle', 'instagram', 'ig', 'iguser', 'igusername', 'username'],
+  bookingSystem: ['bookingplatform', 'bookingsystem', 'booking', 'platform', 'software'],
+  firstName: ['firstname', 'first', 'fname'],
+  lastName: ['lastname', 'last', 'lname'],
+  statusText: ['status', 'leadstatus', 'disposition'],
+  notes: ['notes', 'note', 'context', 'summary', 'comment', 'comments'],
 };
 
 /**
@@ -83,11 +92,11 @@ export function analyzeImport(text: string, existing: { phones: Set<string>; key
   const hasHeader = header.some((h) => Object.values(FIELD_ALIASES).some((a) => a.includes(h)));
   const findCol = (field: string) => header.findIndex((h) => FIELD_ALIASES[field].includes(h));
   const cols = hasHeader
-    ? { salon: findCol('salon'), city: findCol('city'), phone: findCol('phone'), email: findCol('email'), contactName: findCol('contactName'), role: findCol('role') }
-    : { salon: 0, city: 1, phone: 2, email: 3, contactName: 4, role: 5 };
+    ? { salon: findCol('salon'), city: findCol('city'), phone: findCol('phone'), email: findCol('email'), contactName: findCol('contactName'), role: findCol('role'), handle: findCol('handle'), bookingSystem: findCol('bookingSystem'), firstName: findCol('firstName'), lastName: findCol('lastName'), statusText: findCol('statusText'), notes: findCol('notes') }
+    : { salon: 0, city: 1, phone: 2, email: 3, contactName: 4, role: 5, handle: -1, bookingSystem: -1, firstName: -1, lastName: -1, statusText: -1, notes: -1 };
 
   const detected: { field: string; column: string }[] = [];
-  const labels: Record<string, string> = { salon: 'Salon', city: 'City', phone: 'Phone', email: 'Email', contactName: 'Contact', role: 'Role' };
+  const labels: Record<string, string> = { salon: 'Salon', city: 'City', phone: 'Phone', email: 'Email', contactName: 'Contact', role: 'Role', handle: 'Instagram', bookingSystem: 'Booking' };
   for (const f of Object.keys(labels)) {
     const i = (cols as any)[f];
     if (i >= 0) detected.push({ field: labels[f], column: hasHeader ? (rows[0][i] || '').trim() || `column ${i + 1}` : `column ${i + 1}` });
@@ -99,7 +108,18 @@ export function analyzeImport(text: string, existing: { phones: Set<string>; key
   const get = (r: string[], i: number) => (i >= 0 ? (r[i] || '').trim() : '');
 
   const out: AnalyzedRow[] = data.map((r) => {
-    const salon = get(r, cols.salon);
+    const handleRaw = get(r, cols.handle);
+    const handle = handleRaw ? '@' + handleRaw.replace(/^@/, '') : undefined;
+    const first = get(r, cols.firstName);
+    const last = get(r, cols.lastName);
+    const nameJoined = [first, last].filter(Boolean).join(' ').trim();
+    const contactName = nameJoined || get(r, cols.contactName) || undefined;
+    const bookingSystem = get(r, cols.bookingSystem) || undefined;
+    const noteParts = [get(r, cols.statusText), get(r, cols.notes)].map((x) => x.trim()).filter(Boolean);
+    const notes = noteParts.length ? noteParts.join(' — ') : undefined;
+    // Instagram rows often have no business name yet — fall back to the handle
+    // (then their name) so the lead is still valid and identifiable.
+    const salon = get(r, cols.salon) || handle || contactName || '';
     const city = get(r, cols.city);
     const rawPhone = get(r, cols.phone);
     const rawEmail = get(r, cols.email);
@@ -127,7 +147,7 @@ export function analyzeImport(text: string, existing: { phones: Set<string>; key
       else if (seen.has(key)) status = 'dup_batch';
       else seen.add(key);
     }
-    return { salon, city: city || undefined, phone, email, contactName: get(r, cols.contactName) || undefined, role: get(r, cols.role) || undefined, status, warnings };
+    return { salon, city: city || undefined, phone, email, contactName, role: get(r, cols.role) || undefined, handle, bookingSystem, notes, status, warnings };
   });
 
   const count = (s: RowStatus) => out.filter((r) => r.status === s).length;

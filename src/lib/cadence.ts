@@ -90,6 +90,16 @@ export const DEFAULT_EMAIL_SUBJECT = '{salon}: stop losing after-hours bookings'
 export const DEFAULT_EMAIL_BODY =
   'Hi{first_name} — noticed {salon} probably misses calls after you close. We set salons up with a 24/7 AI receptionist that answers and books them. 60-second demo inside — worth a look?';
 
+// ── Instagram warm-lead cadence ──────────────────────────────────────────────
+// Salons that DM'd asking for a demo. Fixed id (matches seed.sql / migration
+// 0012) so imports can drop leads straight onto it. Text-first, DM-referencing.
+export const INSTAGRAM_CADENCE_ID = '22222222-2222-2222-2222-222222222222';
+export const IG_SMS =
+  'Hi{first_name}! It\'s Seth from Tally — thanks for the DM about {salon}. Here\'s that 2-min demo I mentioned: {demo_link}. Want me to give you a quick call today?';
+export const IG_EMAIL_SUBJECT = '{salon}: the AI receptionist demo you asked about';
+export const IG_EMAIL_BODY =
+  'Hi{first_name} — you messaged us on Instagram about a demo for {salon}. Here\'s the 60-second version: {demo_link}. It answers every call you miss and books straight into your calendar. Worth a look?';
+
 // ── Disposition branching ────────────────────────────────────────────────────
 // The six outcomes a call can end in. `no_answer/voicemail/wrong_number` are the
 // call-level results; `booked/callback/not_interested` are the "Connected" sub-

@@ -31,6 +31,8 @@ export interface Lead {
   website?: string;
   bookingSystem?: string;
   source?: string;
+  handle?: string;      // Instagram @handle (source = 'instagram')
+  notes?: string;       // enrichment context / their DM ask
   stage: Stage;
   cadenceId: string;
   cadencePos: number;

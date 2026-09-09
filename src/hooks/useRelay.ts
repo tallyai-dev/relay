@@ -2,8 +2,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
-import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, updateLeadEnrichment, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
+import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL, INSTAGRAM_CADENCE_ID, IG_SMS, IG_EMAIL_BODY, IG_EMAIL_SUBJECT } from '@/lib/cadence';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -20,6 +20,17 @@ const SEED_CADENCES: Cadence[] = [
       { position: 1, channel: 'call', waitMinutes: 1440 },
       { position: 2, channel: 'text', waitMinutes: 60, template: DEFAULT_SMS },
       { position: 3, channel: 'email', waitMinutes: 0, template: DEFAULT_EMAIL_BODY, subject: DEFAULT_EMAIL_SUBJECT },
+    ],
+  },
+  {
+    id: INSTAGRAM_CADENCE_ID,
+    name: 'Instagram \u2014 warm demo',
+    steps: [
+      { position: 0, channel: 'text', waitMinutes: 0, template: IG_SMS },
+      { position: 1, channel: 'call', waitMinutes: 120 },
+      { position: 2, channel: 'text', waitMinutes: 1440, template: IG_SMS },
+      { position: 3, channel: 'email', waitMinutes: 1440, template: IG_EMAIL_BODY, subject: IG_EMAIL_SUBJECT },
+      { position: 4, channel: 'call', waitMinutes: 1440 },
     ],
   },
 ];
@@ -282,6 +293,36 @@ export function useRelay() {
       })),
     ]);
     return rows.length;
+  }, [enabled]);
+
+  // Instagram demo-requesters: reachable rows (phone/email) deploy onto the warm
+  // cadence; no-contact rows stay in staging, flagged for enrichment.
+  const importInstagramRows = useCallback(async (rows: ImportRow[], ownerRepId?: string): Promise<{ deployed: number; staged: number; total: number }> => {
+    if (!rows.length) return { deployed: 0, staged: 0, total: 0 };
+    if (enabled) {
+      const res = await importInstagramLeads(rows, ownerRepId);
+      const fresh = await fetchLeads();
+      setLeads(fresh);
+      return res;
+    }
+    const emailOk = (e?: string) => !!(e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim()));
+    let deployed = 0;
+    setLeads((prev) => [
+      ...prev,
+      ...rows.map((r, i) => {
+        const dialable = !!((r.phone || '').trim() || emailOk(r.email));
+        if (dialable) deployed++;
+        return {
+          id: 'ig' + Date.now() + i, salon: r.salon, city: r.city || '', phone: r.phone || '',
+          email: r.email, source: 'instagram', handle: r.handle, notes: r.notes, bookingSystem: r.bookingSystem,
+          stage: (dialable ? 'working' : 'new') as Stage,
+          cadenceId: INSTAGRAM_CADENCE_ID, cadencePos: 0, deployed: dialable,
+          objection: 'Instagram', lastTouch: 'New',
+          contact: { id: 'c' + i, name: r.contactName || r.handle || '\u2014', role: 'Owner', phone: r.phone },
+        };
+      }),
+    ]);
+    return { deployed, staged: rows.length - deployed, total: rows.length };
   }, [enabled]);
 
   // ── Flow control ───────────────────────────────────────────────────────────
@@ -944,7 +985,7 @@ export function useRelay() {
 
   return {
     view, setView, leads, activities, stats, activeLeadId, setActiveLeadId, leadById,
-    flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads, importCleanRows,
+    flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads, importCleanRows, importInstagramRows,
     me, reps, signOut,
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow, sendLeadEmail,
     addActivity, setStage,
