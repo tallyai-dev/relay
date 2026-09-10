@@ -28,6 +28,7 @@ const Icon = {
 export default function RelayApp() {
   const r = useRelay();
   const [importOpen, setImportOpen] = useState(false);
+  const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [reportsRep, setReportsRep] = useState(''); // '' = everyone (admin)
   return (
     <div className="app">
@@ -35,7 +36,7 @@ export default function RelayApp() {
       <div className="main">
         <TopBar r={r} onImport={() => setImportOpen(true)} />
         <div className="content">
-          {r.view === 'leads' && <LeadsView r={r} onImport={() => setImportOpen(true)} />}
+          {r.view === 'leads' && <LeadsView r={r} onImport={() => setImportOpen(true)} onNewLead={() => setNewLeadOpen(true)} />}
           {r.view === 'staging' && r.isAdmin && <StagingView r={r} onImport={() => setImportOpen(true)} />}
           {r.view === 'enrich' && <EnrichView r={r} />}
           {r.view === 'dialer' && <Dialer r={r} />}
@@ -46,6 +47,7 @@ export default function RelayApp() {
         </div>
       </div>
       {importOpen && <ImportModal r={r} onClose={() => setImportOpen(false)} />}
+      {newLeadOpen && <NewLeadModal r={r} onClose={() => setNewLeadOpen(false)} />}
       <IncomingBanner r={r} />
       <FloatingDialer r={r} />
     </div>
@@ -58,6 +60,81 @@ const ROW_BADGE: Record<string, { label: string; cls: string }> = {
   dup_batch: { label: 'Dup in file', cls: 'rb-dup' },
   invalid: { label: 'No salon name', cls: 'rb-bad' },
 };
+
+// Normalize an Instagram handle or profile URL to { user, handle, url, valid }.
+const IG_USER_RE = /^[A-Za-z0-9._]{1,30}$/;
+function parseHandle(input: string): { user: string; handle: string; url: string; valid: boolean } {
+  let u = (input || '').trim();
+  u = u.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/[/?#].*$/, '').replace(/^@+/, '');
+  const valid = IG_USER_RE.test(u);
+  return { user: u, handle: u ? '@' + u : '', url: u ? 'https://instagram.com/' + u : '', valid };
+}
+
+// Create a lead by hand. An Instagram handle is verified (valid format), linked
+// (opens the live profile to confirm), and tags the lead source=instagram so the
+// avatar badge shows.
+function NewLeadModal({ r, onClose }: { r: R; onClose: () => void }) {
+  const [salon, setSalon] = useState('');
+  const [name, setName] = useState('');
+  const [ig, setIg] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [website, setWebsite] = useState('');
+  const [booking, setBooking] = useState('');
+  const [city, setCity] = useState('');
+  const [cadenceId, setCadenceId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const h = parseHandle(ig);
+  const canSave = !!(salon.trim() || h.handle) && (!ig.trim() || h.valid);
+  const save = async () => {
+    setBusy(true);
+    await r.addLead({ salon: salon.trim() || h.handle, contactName: name, handle: h.user, phone, email, website, bookingSystem: booking, city, cadenceId: cadenceId || undefined });
+    setBusy(false); onClose();
+  };
+  const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: '8px 10px', fontSize: 13, background: 'var(--panel)', color: 'var(--ink)' };
+  const field = (label: string, val: string, set: (v: string) => void, ph = '', type = 'text') => (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>{label}</span>
+      <input style={inputStyle} type={type} value={val} placeholder={ph} onChange={(e) => set(e.target.value)} />
+    </label>
+  );
+  return (
+    <div className="overlay on" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" style={{ maxWidth: 560 }}>
+        <div className="mh"><h3>New lead</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="mb" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>Instagram</span>
+            <input style={inputStyle} value={ig} placeholder="@handle or instagram.com/handle" onChange={(e) => setIg(e.target.value)} />
+            {ig.trim() && (h.valid
+              ? <span style={{ fontSize: 12, color: '#2f855a', display: 'inline-flex', alignItems: 'center', gap: 6 }}>✓ Linked <b>{h.handle}</b> — <a href={h.url} target="_blank" rel="noreferrer" style={{ color: '#2f855a', fontWeight: 600 }}>open to verify ↗</a></span>
+              : <span style={{ fontSize: 12, color: '#c0503f' }}>Not a valid Instagram handle yet</span>)}
+          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {field('Business / salon', salon, setSalon, h.handle ? `defaults to ${h.handle}` : 'Salon name')}
+            {field('Contact name', name, setName, 'Owner / manager')}
+            {field('Phone', phone, setPhone, '(801) 555-0123', 'tel')}
+            {field('Email', email, setEmail, 'name@salon.com', 'email')}
+            {field('Website', website, setWebsite, 'salon.com')}
+            {field('Booking system', booking, setBooking, 'Vagaro, Boulevard\u2026')}
+            {field('City', city, setCity, 'City, ST')}
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>Cadence</span>
+              <select style={inputStyle} value={cadenceId} onChange={(e) => setCadenceId(e.target.value)}>
+                <option value="">Default</option>
+                {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+        <div className="mf">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn primary" disabled={!canSave || busy} onClick={save}>{busy ? 'Adding\u2026' : 'Add lead & open'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Small Instagram badge dropped on the corner of a lead avatar when the lead
 // came from Instagram (source === 'instagram').
@@ -286,7 +363,7 @@ function dueBadge(l: Lead): string | null {
   return `⏰ due in ${d}d`;
 }
 
-function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
+function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onNewLead: () => void }) {
   const [q, setQ] = useState('');
   const [stage, setStage] = useState('all');
   const [booking, setBooking] = useState('all');
@@ -346,6 +423,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
       <div className="page-head">
         <div><h1>Leads</h1><p>{r.activeLeads.length} active salons{r.isAdmin && r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn primary" onClick={onNewLead}>+ New lead</button>
           <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
           {r.dueLeads.length > 0
             ? <button className="btn primary flowbtn" onClick={r.startDueFlow}>{Icon.flow}Work {r.dueLeads.length} due today</button>
@@ -1440,6 +1518,7 @@ function Dialer({ r }: { r: R }) {
             <div className="qc"><div className="qk">Email</div><div className="qv">{lead.email ? <a className="qv-link" href={`mailto:${lead.email}`}>{lead.email}</a> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Booking</div><div className="qv">{lead.bookingSystem ? <span className="book-chip">{lead.bookingSystem}</span> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Website</div><div className="qv">{lead.website ? <a className="qv-link" href={`https://${lead.website}`} target="_blank" rel="noreferrer">{lead.website}</a> : <span className="muted">—</span>}</div></div>
+            <div className="qc"><div className="qk">Instagram</div><div className="qv">{lead.handle ? <a className="qv-link" href={`https://instagram.com/${lead.handle.replace(/^@+/, '')}`} target="_blank" rel="noreferrer">{lead.handle}</a> : <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Cadence</div>
               <select className="qv-select" value={r.cadences.some((c) => c.id === lead.cadenceId) ? lead.cadenceId : (r.cadences[0]?.id || '')}
                 onChange={(e) => r.assignCadence(lead.id, e.target.value)} onClick={(e) => e.stopPropagation()}>
@@ -1486,7 +1565,8 @@ function LeadEditForm({ r, lead, onDone }: { r: R; lead: Lead; onDone: () => voi
   const [website, setWebsite] = useState(lead.website || '');
   const [booking, setBooking] = useState(lead.bookingSystem || '');
   const [city, setCity] = useState(lead.city || '');
-  const save = () => { r.saveLeadEdits(lead.id, { salon, contactName: name, phone, email, website, bookingSystem: booking, city }); onDone(); };
+  const [handle, setHandle] = useState(lead.handle || '');
+  const save = () => { r.saveLeadEdits(lead.id, { salon, contactName: name, phone, email, website, bookingSystem: booking, city, handle }); onDone(); };
   const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', fontSize: 13, background: 'var(--panel)', color: 'var(--ink)' };
   const field = (label: string, val: string, set: (v: string) => void, ph = '', type = 'text') => (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1504,6 +1584,7 @@ function LeadEditForm({ r, lead, onDone }: { r: R; lead: Lead; onDone: () => voi
         {field('Website', website, setWebsite, 'salon.com')}
         {field('Booking system', booking, setBooking, 'Vagaro, Boulevard\u2026')}
         {field('City', city, setCity, 'City, ST')}
+        {field('Instagram', handle, setHandle, '@handle')}
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
         <button className="btn sm primary" onClick={save}>Save changes</button>

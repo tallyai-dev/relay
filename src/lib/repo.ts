@@ -587,7 +587,7 @@ export async function updateLeadEnrichment(
 // mirror onto the primary contact.
 export async function updateLeadFields(leadId: string, patch: {
   salon?: string; contactName?: string; phone?: string; email?: string;
-  website?: string; bookingSystem?: string; city?: string;
+  website?: string; bookingSystem?: string; city?: string; handle?: string;
 }): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
@@ -598,6 +598,7 @@ export async function updateLeadFields(leadId: string, patch: {
   if (patch.website !== undefined) lp.website = patch.website.trim() || null;
   if (patch.bookingSystem !== undefined) lp.booking_system = patch.bookingSystem.trim() || null;
   if (patch.city !== undefined) lp.city = patch.city.trim() || null;
+  if (patch.handle !== undefined) { const h = patch.handle.trim().replace(/^@+/, ''); lp.handle = h ? '@' + h : null; if (h) lp.source = 'instagram'; }
   if (Object.keys(lp).length) {
     const { error } = await sb.from('leads').update(lp).eq('id', leadId);
     if (error) { console.error('updateLeadFields', error); return; }
@@ -627,6 +628,47 @@ export async function createLeadQuick(salon: string, phone: string, ownerRepId?:
     .single();
   if (error) { console.error('createLeadQuick', error); return null; }
   return rowToLead(data);
+}
+
+// Create a lead from scratch (New lead form). Full field set incl. Instagram
+// handle; when a handle is present the lead is tagged source='instagram' so the
+// avatar badge shows. Phone/email/name mirror onto the primary contact.
+export async function createLead(fields: {
+  salon: string; contactName?: string; phone?: string; email?: string; website?: string;
+  bookingSystem?: string; city?: string; handle?: string; notes?: string;
+  cadenceId?: string; ownerRepId?: string;
+}): Promise<Lead | null> {
+  const sb = supabaseBrowser();
+  if (!sb) return null;
+  const phone = fields.phone ? (toE164(fields.phone) ?? fields.phone.trim()) : null;
+  const h = (fields.handle || '').trim().replace(/^@+/, '');
+  const handle = h ? '@' + h : null;
+  const { data, error } = await sb.from('leads').insert({
+    salon: fields.salon.trim(),
+    city: fields.city?.trim() || null,
+    phone,
+    email: fields.email?.trim() || null,
+    website: fields.website?.trim() || null,
+    booking_system: fields.bookingSystem?.trim() || null,
+    handle,
+    notes: fields.notes?.trim() || null,
+    source: handle ? 'instagram' : null,
+    stage: 'new',
+    cadence_id: fields.cadenceId || DEFAULT_CADENCE,
+    cadence_pos: 0,
+    owner_rep_id: fields.ownerRepId ?? null,
+  }).select('id').single();
+  if (error || !data) { console.error('createLead', error); return null; }
+  await sb.from('contacts').insert({
+    lead_id: data.id,
+    name: fields.contactName?.trim() || fields.salon.trim(),
+    role: 'Owner',
+    phone,
+    email: fields.email?.trim() || null,
+    is_primary: true,
+  });
+  const { data: full } = await sb.from('leads').select('*, contacts(id,name,role,phone,email,is_primary)').eq('id', data.id).single();
+  return full ? rowToLead(full) : null;
 }
 
 export async function bulkInsertLeads(rows: ImportRow[], ownerRepId?: string): Promise<number> {

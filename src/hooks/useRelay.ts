@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL, INSTAGRAM_CADENCE_ID, IG_SMS, IG_EMAIL_BODY, IG_EMAIL_SUBJECT } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, createLead, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -921,7 +921,7 @@ export function useRelay() {
   // Manual field edit from the lead Edit panel. Provided keys are applied even
   // when blank (clears phone/email/website/booking/city); salon/contact name are
   // ignored when blank. Overwrites, unlike saveEnrichment which only fills gaps.
-  const saveLeadEdits = useCallback((leadId: string, patch: { salon?: string; contactName?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string }) => {
+  const saveLeadEdits = useCallback((leadId: string, patch: { salon?: string; contactName?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; handle?: string }) => {
     setLeads((prev) => prev.map((l) => {
       if (l.id !== leadId) return l;
       const nx = { ...l };
@@ -931,6 +931,7 @@ export function useRelay() {
       if (patch.website !== undefined) nx.website = patch.website.trim() || undefined;
       if (patch.bookingSystem !== undefined) nx.bookingSystem = patch.bookingSystem.trim() || undefined;
       if (patch.city !== undefined) nx.city = patch.city.trim();
+      if (patch.handle !== undefined) { const h = patch.handle.trim().replace(/^@+/, ''); nx.handle = h ? '@' + h : undefined; if (h) nx.source = 'instagram'; }
       if (l.contact) {
         nx.contact = { ...l.contact };
         if (patch.contactName !== undefined && patch.contactName.trim()) nx.contact.name = patch.contactName.trim();
@@ -1014,6 +1015,26 @@ export function useRelay() {
     return lead;
   }, [enabled, me]);
 
+  // Create a lead from scratch (New lead form). A handle tags it source=instagram
+  // (avatar badge). Opens it in the dialer so you can call right away.
+  const addLead = useCallback(async (fields: { salon: string; contactName?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; handle?: string; cadenceId?: string }): Promise<Lead | null> => {
+    if (enabled) {
+      const lead = await createLead({ ...fields, ownerRepId: meRef.current?.id });
+      if (lead) { setLeads((prev) => [...prev, lead]); setActiveLeadId(lead.id); setView('dialer'); }
+      return lead;
+    }
+    const h = (fields.handle || '').trim().replace(/^@+/, '');
+    const lead: Lead = {
+      id: 'new' + Date.now(), salon: fields.salon, city: fields.city || '', phone: fields.phone || '',
+      email: fields.email || undefined, website: fields.website || undefined, bookingSystem: fields.bookingSystem || undefined,
+      handle: h ? '@' + h : undefined, source: h ? 'instagram' : undefined,
+      stage: 'new', cadenceId: fields.cadenceId || DEFAULT_CADENCE_ID, cadencePos: 0,
+      contact: { id: 'c', name: fields.contactName || '\u2014', role: 'Owner', phone: fields.phone, email: fields.email }, lastTouch: 'New',
+    };
+    setLeads((prev) => [...prev, lead]); setActiveLeadId(lead.id); setView('dialer');
+    return lead;
+  }, [enabled]);
+
   return {
     view, setView, leads, activities, stats, activeLeadId, setActiveLeadId, leadById,
     flow, current, currentLead, currentChannel, attemptInfo, enabled, importLeads, importCleanRows, importInstagramRows,
@@ -1024,7 +1045,7 @@ export function useRelay() {
     activeCall, startCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany, moveCadenceLeads,
     book, setBook,
-    recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead,
+    recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead, addLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
     isAdmin, repLeadCounts, loadTeam, inviteRep, resetRepPassword, emailPasswordReset, updateRep, assignOwnerMany,
     stagedLeads, activeLeads, deployLeads,
