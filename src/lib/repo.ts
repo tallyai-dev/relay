@@ -580,6 +580,35 @@ export async function updateLeadEnrichment(
   }
 }
 
+// Manual edit of a lead's fields (from the Edit panel). Unlike updateLeadEnrichment
+// this can OVERWRITE and CLEAR values: a provided key is written even when blank
+// (phone/email/website/booking/city clear to null), so a bad enrichment can be
+// corrected by hand. Salon/contact name are ignored when blank. Phone/email/name
+// mirror onto the primary contact.
+export async function updateLeadFields(leadId: string, patch: {
+  salon?: string; contactName?: string; phone?: string; email?: string;
+  website?: string; bookingSystem?: string; city?: string;
+}): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  const lp: any = {};
+  if (patch.salon !== undefined && patch.salon.trim()) lp.salon = patch.salon.trim();
+  if (patch.phone !== undefined) lp.phone = patch.phone.trim() ? (toE164(patch.phone) ?? patch.phone.trim()) : null;
+  if (patch.email !== undefined) lp.email = patch.email.trim() || null;
+  if (patch.website !== undefined) lp.website = patch.website.trim() || null;
+  if (patch.bookingSystem !== undefined) lp.booking_system = patch.bookingSystem.trim() || null;
+  if (patch.city !== undefined) lp.city = patch.city.trim() || null;
+  if (Object.keys(lp).length) {
+    const { error } = await sb.from('leads').update(lp).eq('id', leadId);
+    if (error) { console.error('updateLeadFields', error); return; }
+  }
+  const cp: any = {};
+  if (patch.phone !== undefined) cp.phone = lp.phone;
+  if (patch.email !== undefined) cp.email = lp.email;
+  if (patch.contactName !== undefined && patch.contactName.trim()) cp.name = patch.contactName.trim();
+  if (Object.keys(cp).length) await sb.from('contacts').update(cp).eq('lead_id', leadId).eq('is_primary', true);
+}
+
 // Snooze a lead: set its next-due timestamp N days out (null clears / makes due now).
 export async function setLeadNextAction(leadId: string, iso: string | null): Promise<void> {
   const sb = supabaseBrowser();

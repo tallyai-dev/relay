@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL, INSTAGRAM_CADENCE_ID, IG_SMS, IG_EMAIL_BODY, IG_EMAIL_SUBJECT } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
+import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -350,7 +350,10 @@ export function useRelay() {
       .filter((l) => leadIsDue(l) && bookMatch(l))
       .filter((l) => !idSet || idSet.has(l.id))
       .sort((a, b) => {
-        // Warm leads (opened/clicked an email) come first, then most-overdue.
+        // Fresh Instagram leads first, then warm (opened/clicked), then most-overdue.
+        const ia = a.source === 'instagram' ? 0 : 1;
+        const ib = b.source === 'instagram' ? 0 : 1;
+        if (ia !== ib) return ia - ib;
         const wa = warmRef.current.has(a.id) ? 0 : 1;
         const wb = warmRef.current.has(b.id) ? 0 : 1;
         if (wa !== wb) return wa - wb;
@@ -915,8 +918,36 @@ export function useRelay() {
     addActivity(leadId, { kind: 'note', ty: 'Enriched from Google', time: 'Just now', body: 'Filled missing info from Google Places.' });
   }, [enabled, addActivity]);
 
+  // Manual field edit from the lead Edit panel. Provided keys are applied even
+  // when blank (clears phone/email/website/booking/city); salon/contact name are
+  // ignored when blank. Overwrites, unlike saveEnrichment which only fills gaps.
+  const saveLeadEdits = useCallback((leadId: string, patch: { salon?: string; contactName?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string }) => {
+    setLeads((prev) => prev.map((l) => {
+      if (l.id !== leadId) return l;
+      const nx = { ...l };
+      if (patch.salon !== undefined && patch.salon.trim()) nx.salon = patch.salon.trim();
+      if (patch.phone !== undefined) nx.phone = patch.phone.trim();
+      if (patch.email !== undefined) nx.email = patch.email.trim() || undefined;
+      if (patch.website !== undefined) nx.website = patch.website.trim() || undefined;
+      if (patch.bookingSystem !== undefined) nx.bookingSystem = patch.bookingSystem.trim() || undefined;
+      if (patch.city !== undefined) nx.city = patch.city.trim();
+      if (l.contact) {
+        nx.contact = { ...l.contact };
+        if (patch.contactName !== undefined && patch.contactName.trim()) nx.contact.name = patch.contactName.trim();
+        if (patch.phone !== undefined) nx.contact.phone = patch.phone.trim() || undefined;
+        if (patch.email !== undefined) nx.contact.email = patch.email.trim() || undefined;
+      }
+      return nx;
+    }));
+    if (enabled) updateLeadFields(leadId, patch);
+    addActivity(leadId, { kind: 'note', ty: 'Details edited', time: 'Just now', body: 'Lead details edited by hand.' });
+  }, [enabled, addActivity]);
+
   // ── Due-today scheduler ──────────────────────────────────────────────────────
   const dueLeads = leads.filter((l) => leadIsDue(l) && bookMatch(l)).sort((a, b) => {
+    const ia = a.source === 'instagram' ? 0 : 1;
+    const ib = b.source === 'instagram' ? 0 : 1;
+    if (ia !== ib) return ia - ib; // fresh Instagram leads sit at the top of the session
     const wa = warmLeadIds.has(a.id) ? 0 : 1;
     const wb = warmLeadIds.has(b.id) ? 0 : 1;
     if (wa !== wb) return wa - wb;
@@ -997,6 +1028,6 @@ export function useRelay() {
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
     isAdmin, repLeadCounts, loadTeam, inviteRep, resetRepPassword, emailPasswordReset, updateRep, assignOwnerMany,
     stagedLeads, activeLeads, deployLeads,
-    enrichableLeads, enrichLead, saveEnrichment, deleteLead, removeFromCadence,
+    enrichableLeads, enrichLead, saveEnrichment, saveLeadEdits, deleteLead, removeFromCadence,
   };
 }

@@ -1332,6 +1332,8 @@ function Dialer({ r }: { r: R }) {
   const acts = r.activities[lead.id] || [];
   const inFlow = r.flow.on && !r.flow.paused;
   const idx = r.leads.findIndex((l) => l.id === lead.id);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setEditing(false); }, [lead.id]);
 
   return (
     <section className="view on" style={{ padding: 0 }}>
@@ -1385,7 +1387,7 @@ function Dialer({ r }: { r: R }) {
                 <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
               )}
             </div>
-            <div className="r"><BookDemo lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><BookDemo lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           {inFlow ? (
@@ -1401,6 +1403,7 @@ function Dialer({ r }: { r: R }) {
               <div className="o"><button className="btn sm primary" onClick={() => r.startFlow()}>Start Flow</button></div></div>
           )}
 
+          {editing ? <LeadEditForm r={r} lead={lead} onDone={() => setEditing(false)} /> : (
           <div className="qgrid">
             <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone
               ? <button className="qv-call" title={`Call ${lead.phone}`} onClick={() => r.startCall(lead.id)}>{Icon.call} {lead.phone}</button>
@@ -1417,6 +1420,7 @@ function Dialer({ r }: { r: R }) {
             <div className="qc"><div className="qk">City</div><div className="qv">{lead.city || <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Last touch</div><div className="qv">{lead.lastTouch}</div></div>
           </div>
+          )}
 
           <TouchStrip r={r} lead={lead} acts={acts} />
 
@@ -1444,6 +1448,42 @@ function Dialer({ r }: { r: R }) {
 const fmtDur = (s?: number) => { if (s == null) return ''; const m = Math.floor(s / 60); return `${m}:${String(s % 60).padStart(2, '0')}`; };
 const fmtDate = (iso?: string) => { if (!iso) return ''; try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return ''; } };
 const recSid = (url?: string) => url?.match(/Recordings\/(RE[0-9a-fA-F]+)/)?.[1];
+
+function LeadEditForm({ r, lead, onDone }: { r: R; lead: Lead; onDone: () => void }) {
+  const [salon, setSalon] = useState(lead.salon || '');
+  const [name, setName] = useState(lead.contact?.name && lead.contact.name !== '\u2014' ? lead.contact.name : '');
+  const [phone, setPhone] = useState(lead.phone || '');
+  const [email, setEmail] = useState(lead.email || '');
+  const [website, setWebsite] = useState(lead.website || '');
+  const [booking, setBooking] = useState(lead.bookingSystem || '');
+  const [city, setCity] = useState(lead.city || '');
+  const save = () => { r.saveLeadEdits(lead.id, { salon, contactName: name, phone, email, website, bookingSystem: booking, city }); onDone(); };
+  const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', fontSize: 13, background: 'var(--panel)', color: 'var(--ink)' };
+  const field = (label: string, val: string, set: (v: string) => void, ph = '', type = 'text') => (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>{label}</span>
+      <input style={inputStyle} type={type} value={val} placeholder={ph} onChange={(e) => set(e.target.value)} />
+    </label>
+  );
+  return (
+    <div style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 14, background: 'var(--panel)', marginBottom: 4 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {field('Business / salon', salon, setSalon, 'Salon name')}
+        {field('Contact name', name, setName, 'Owner / manager')}
+        {field('Phone', phone, setPhone, '(801) 555-0123', 'tel')}
+        {field('Email', email, setEmail, 'name@salon.com', 'email')}
+        {field('Website', website, setWebsite, 'salon.com')}
+        {field('Booking system', booking, setBooking, 'Vagaro, Boulevard\u2026')}
+        {field('City', city, setCity, 'City, ST')}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        <button className="btn sm primary" onClick={save}>Save changes</button>
+        <button className="btn sm" onClick={onDone}>Cancel</button>
+        <span style={{ fontSize: 11, color: 'var(--ink3)' }}>Clear a field to remove it. Phone &amp; email also update the contact.</span>
+      </div>
+    </div>
+  );
+}
 
 function TimelineItem({ h }: { h: Activity }) {
   const [showTx, setShowTx] = useState(false);
