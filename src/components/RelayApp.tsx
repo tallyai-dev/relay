@@ -289,7 +289,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   const dueSet = new Set(r.dueLeads.map((l) => l.id));
   const schedSet = new Set(r.scheduledLeads.map((l) => l.id));
 
-  const filtered = r.activeLeads.filter((l) => {
+  const filteredRaw = r.activeLeads.filter((l) => {
     if (q) { const s = q.trim().toLowerCase(); if (!(l.salon.toLowerCase().includes(s) || (l.city || '').toLowerCase().includes(s) || (l.contact?.name || '').toLowerCase().includes(s))) return false; }
     if (stage !== 'all' && l.stage !== stage) return false;
     if (booking === 'none') { if (l.bookingSystem) return false; }
@@ -301,6 +301,9 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
     if (needsEnrich && l.phone && l.email && l.website && l.bookingSystem) return false;
     return true;
   });
+  // Pin Instagram warm leads to the top so a fresh batch doesn't get buried
+  // under the older book (leads otherwise load oldest-first).
+  const filtered = filteredRaw.slice().sort((a, b) => Number(b.source === 'instagram') - Number(a.source === 'instagram'));
 
   const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || owner !== 'all' || needsEnrich;
   const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setOwner('all'); setNeedsEnrich(false); };
