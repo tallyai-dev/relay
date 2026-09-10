@@ -59,6 +59,16 @@ const ROW_BADGE: Record<string, { label: string; cls: string }> = {
   invalid: { label: 'No salon name', cls: 'rb-bad' },
 };
 
+// Small Instagram badge dropped on the corner of a lead avatar when the lead
+// came from Instagram (source === 'instagram').
+function IgBadge({ size = 15 }: { size?: number }) {
+  return (
+    <span title="From Instagram" style={{ position: 'absolute', right: -3, bottom: -3, width: size, height: size, borderRadius: Math.round(size * 0.33), background: 'linear-gradient(105deg,#F58529,#DD2A7B,#8134AF,#515BD4)', border: '2px solid var(--panel)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>
+      <svg viewBox="0 0 24 24" width={Math.round(size * 0.62)} height={Math.round(size * 0.62)} fill="none" stroke="#fff" strokeWidth={2.4}><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1.3" fill="#fff" /></svg>
+    </span>
+  );
+}
+
 function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
   const [csv, setCsv] = useState('salon,city,phone,email,contact,role\nBella Salon,Denver CO,(303) 555-0101,hi@bella.com,Ana,Owner');
   const [busy, setBusy] = useState(false);
@@ -409,7 +419,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
             {filtered.map((l, i) => (
               <tr key={l.id} className={selected.has(l.id) ? 'row-sel' : ''} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
                 <td className="ck" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} /></td>
-                <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
+                <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i), position: 'relative', overflow: 'visible' }}>{initials(l.salon)}{l.source === 'instagram' && <IgBadge />}</div>
                   <div><div className="nm">{l.salon}{l.cadenceCompletedAt && <span className="row-done" title={`Completed ${l.cadenceCompletedName || 'cadence'} · ${fmtDate(l.cadenceCompletedAt)}`}>✓ Done</span>}{r.isAdmin && l.ownerRepId && <span className="row-owner" title="Assigned rep">{repName(l.ownerRepId)}</span>}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
                 <td>{l.contact?.name === '—' ? <span className="muted">No name yet</span> : <div><div style={{ fontWeight: 600 }}>{l.contact?.name}</div><div className="loc">{l.contact?.role}</div></div>}</td>
                 <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
@@ -541,7 +551,7 @@ function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
             <div className="sl-rows">
               {r.stagedLeads.slice(0, 60).map((l, i) => (
                 <div key={l.id} className="sl-row">
-                  <div className="avatar sm" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
+                  <div className="avatar sm" style={{ background: colorFor(i), position: 'relative', overflow: 'visible' }}>{initials(l.salon)}{l.source === 'instagram' && <IgBadge size={14} />}</div>
                   <div className="sl-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}{l.phone ? ` · ${l.phone}` : ''}</div></div>
                   {i < amt && <span className="sl-next">next ↑</span>}
                 </div>
@@ -632,7 +642,7 @@ function EnrichView({ r }: { r: R }) {
           <div className="enr-list">
             {leads.map((l, i) => (
               <div key={l.id} className={`enr-row ${sel === l.id ? 'on' : ''}`} onClick={() => setSel(l.id)}>
-                <div className="avatar sm" style={{ background: colorFor(i) }}>{initials(l.salon)}</div>
+                <div className="avatar sm" style={{ background: colorFor(i), position: 'relative', overflow: 'visible' }}>{initials(l.salon)}{l.source === 'instagram' && <IgBadge size={14} />}</div>
                 <div className="enr-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}</div></div>
                 {saved.has(l.id) ? <span className="mchip ok">Enriched ✓</span> : missChips(l)}
                 <DeleteLeadButton r={r} leadId={l.id} label="✕" armedLabel="Delete?" className="enr-del" title={`Delete ${l.salon}`} after={() => { if (sel === l.id) { const rest = leads.filter((x) => x.id !== l.id); setSel(rest[0]?.id || null); } }} />
@@ -1367,7 +1377,7 @@ function Dialer({ r }: { r: R }) {
             const warm = r.warmLeadIds.has(id);
             return (
               <div key={id} className={`ws-item ${id === lead.id ? 'on' : ''} ${done ? 'done' : ''} ${warm ? 'warm' : ''}`} onClick={() => r.setActiveLeadId(id)}>
-                <div className="avatar ai" style={{ background: colorFor(li) }}>{initials(l.salon)}</div>
+                <div className="avatar ai" style={{ background: colorFor(li), position: 'relative', overflow: 'visible' }}>{initials(l.salon)}{l.source === 'instagram' && <IgBadge size={13} />}</div>
                 <div><div className="nm">{l.salon}{warm && <span className="warm-flag" title="Opened or clicked your email">🔥</span>}</div>
                   <div className="mt">{warm ? 'Warm · engaged your email' : (l.contact?.name === '—' ? l.contact?.role : l.contact?.name)}</div></div>
                 {done ? <div className="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5" /></svg></div>
@@ -1395,7 +1405,7 @@ function Dialer({ r }: { r: R }) {
           )}
 
           <div className="lead-head">
-            <div className="avatar big" style={{ background: colorFor(idx) }}>{initials(lead.salon)}</div>
+            <div className="avatar big" style={{ background: colorFor(idx), position: 'relative', overflow: 'visible' }}>{initials(lead.salon)}{lead.source === 'instagram' && <IgBadge size={20} />}</div>
             <div>
               <h2>{lead.salon}</h2>
               <div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div>
