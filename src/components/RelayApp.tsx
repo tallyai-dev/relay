@@ -63,6 +63,7 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
   const [csv, setCsv] = useState('salon,city,phone,email,contact,role\nBella Salon,Denver CO,(303) 555-0101,hi@bella.com,Ana,Owner');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<number | null>(null);
+  const [igRes, setIgRes] = useState<{ deployed: number; staged: number; total: number } | null>(null);
   const [owner, setOwner] = useState<string>(r.me?.id || '');
   const [showAll, setShowAll] = useState(false);
   const [drag, setDrag] = useState(false);
@@ -91,11 +92,17 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
   const analysis = useMemo(() => (csv.trim() ? analyzeImport(csv, existing) : null), [csv, existing]);
   const s = analysis?.summary;
   const readyRows = analysis ? analysis.rows.filter((x) => x.status === 'ready') : [];
+  const igMode = !!analysis?.detected.find((d) => d.field === 'Instagram');
 
   const run = async () => {
     setBusy(true);
-    const n = await r.importCleanRows(readyRows, owner || r.me?.id);
-    setBusy(false); setDone(n);
+    if (igMode) {
+      const res = await r.importInstagramRows(readyRows, owner || r.me?.id);
+      setBusy(false); setIgRes(res); setDone(res.total);
+    } else {
+      const n = await r.importCleanRows(readyRows, owner || r.me?.id);
+      setBusy(false); setDone(n);
+    }
   };
 
   const rowsToShow = analysis ? (showAll ? analysis.rows : analysis.rows.slice(0, 8)) : [];
@@ -107,6 +114,14 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
         <div className="mb import-body">
           {done === null ? (
             <>
+              {igMode && (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '11px 13px', borderRadius: 12, marginBottom: 12, background: 'linear-gradient(105deg,#fbeaf3,#efeaf9)', border: '1px solid #f0d5e6' }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, background: 'linear-gradient(105deg,#F58529,#DD2A7B,#8134AF,#515BD4)' }} />
+                  <div style={{ fontSize: 12, color: '#5a3550', lineHeight: 1.5 }}>
+                    <b>Instagram warm import.</b> These get <b>source = instagram</b> and start on the <b>Instagram — warm demo</b> cadence. Salons you can reach (phone or email) go live now; ones with no contact yet wait under <b>Needs enrichment</b>. The first text is a draft you send from Flow — nothing auto-sends.
+                  </div>
+                </div>
+              )}
               <div className="import-hint">Upload a CSV file, or paste rows below. Columns are auto‑detected — phone numbers get cleaned up, bad emails dropped, and duplicates flagged before anything is imported.</div>
               <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" style={{ display: 'none' }}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) loadFile(f); e.target.value = ''; }} />
@@ -171,7 +186,11 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
           ) : (
             <div style={{ textAlign: 'center', padding: '18px 0' }}>
               <div className="success-tick">✓</div>
-              <div><span className="import-count">{done}</span> leads added to <b>staging</b>{r.enabled ? '' : ' (demo)'}. Duplicates and blanks were skipped. Deploy them into a cadence from the Staging tab when you’re ready to call.</div>
+              {igMode && igRes ? (
+                <div><span className="import-count">{igRes.deployed}</span> warm lead{igRes.deployed === 1 ? '' : 's'} live on the <b>Instagram — warm demo</b> cadence{igRes.staged > 0 ? <> · <b>{igRes.staged}</b> with no contact yet waiting under <b>Needs enrichment</b></> : ''}. First texts are drafts — send them from Flow.</div>
+              ) : (
+                <div><span className="import-count">{done}</span> leads added to <b>staging</b>{r.enabled ? '' : ' (demo)'}. Duplicates and blanks were skipped. Deploy them into a cadence from the Staging tab when you’re ready to call.</div>
+              )}
             </div>
           )}
         </div>
@@ -179,10 +198,10 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
           {done === null ? (
             <>
               <button className="btn" onClick={onClose}>Cancel</button>
-              <button className="btn primary" onClick={run} disabled={busy || readyRows.length === 0}>{busy ? 'Importing…' : `Import ${readyRows.length} new lead${readyRows.length === 1 ? '' : 's'}`}</button>
+              <button className="btn primary" onClick={run} disabled={busy || readyRows.length === 0}>{busy ? 'Importing…' : igMode ? `Add ${readyRows.length} Instagram lead${readyRows.length === 1 ? '' : 's'}` : `Import ${readyRows.length} new lead${readyRows.length === 1 ? '' : 's'}`}</button>
             </>
           ) : (
-            <button className="btn primary" onClick={() => { r.setView('staging'); onClose(); }}>Go to staging →</button>
+            <button className="btn primary" onClick={() => { r.setView(igMode ? 'leads' : 'staging'); onClose(); }}>{igMode ? 'Go to leads →' : 'Go to staging →'}</button>
           )}
         </div>
       </div>
@@ -270,8 +289,15 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   const dueSet = new Set(r.dueLeads.map((l) => l.id));
   const schedSet = new Set(r.scheduledLeads.map((l) => l.id));
 
-  const filtered = r.activeLeads.filter((l) => {
-    if (q) { const s = q.trim().toLowerCase(); if (!(l.salon.toLowerCase().includes(s) || (l.city || '').toLowerCase().includes(s) || (l.contact?.name || '').toLowerCase().includes(s))) return false; }
+  const filteredRaw = r.activeLeads.filter((l) => {
+    if (q) {
+      const s = q.trim().toLowerCase();
+      const digits = s.replace(/\D/g, '');
+      const hay = [l.salon, l.city, l.contact?.name, l.email, l.handle, l.phone].map((x) => (x || '').toLowerCase());
+      const phoneDigits = (l.phone || '').replace(/\D/g, '');
+      const hit = hay.some((h) => h.includes(s)) || (!!digits && phoneDigits.includes(digits));
+      if (!hit) return false;
+    }
     if (stage !== 'all' && l.stage !== stage) return false;
     if (booking === 'none') { if (l.bookingSystem) return false; }
     else if (booking !== 'all' && l.bookingSystem !== booking) return false;
@@ -282,6 +308,9 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
     if (needsEnrich && l.phone && l.email && l.website && l.bookingSystem) return false;
     return true;
   });
+  // Pin Instagram warm leads to the top so a fresh batch doesn't get buried
+  // under the older book (leads otherwise load oldest-first).
+  const filtered = filteredRaw.slice().sort((a, b) => Number(b.source === 'instagram') - Number(a.source === 'instagram'));
 
   const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || owner !== 'all' || needsEnrich;
   const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setOwner('all'); setNeedsEnrich(false); };
@@ -305,7 +334,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   return (
     <section className="view on">
       <div className="page-head">
-        <div><h1>Salon prospecting — pipeline</h1><p>{r.activeLeads.length} active salons{r.isAdmin && r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
+        <div><h1>Leads</h1><p>{r.activeLeads.length} active salons{r.isAdmin && r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
           {r.dueLeads.length > 0
@@ -320,7 +349,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
       </div>
 
       <div className="lead-filters">
-        <input className="lf-search" placeholder="Search salon, city, or contact…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="lf-search" placeholder="Search salon, city, contact, phone, or @handle…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={stage} onChange={(e) => setStage(e.target.value)}>
           <option value="all">All stages</option>
           {(Object.keys(stageLabel) as (keyof typeof stageLabel)[]).map((s) => <option key={s} value={s}>{stageLabel[s]}</option>)}
@@ -386,7 +415,19 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
                 <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
                 <td className="muted">{l.lastTouch}</td>
                 <td><span className={`pill ${stagePill[l.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[l.stage]}</span></td>
-                <td><button className="btn sm" onClick={(e) => { e.stopPropagation(); r.setActiveLeadId(l.id); r.setView('dialer'); }}>Open →</button></td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                    <button className="btn sm" disabled={!l.phone} title={l.phone ? `Call ${l.phone}` : 'No phone on file — add one first'}
+                      onClick={() => r.startCall(l.id)}
+                      style={l.phone ? { background: '#2f855a', borderColor: '#2f855a', color: '#fff' } : undefined}>{Icon.call} Call</button>
+                    <select value="" title="Add to a cadence" onChange={(e) => { if (e.target.value) r.assignCadence(l.id, e.target.value); }}
+                      style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '5px 7px', fontSize: 11.5, background: 'var(--panel)', color: 'var(--ink)' }}>
+                      <option value="">Cadence…</option>
+                      {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button className="btn sm" onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }}>Open →</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1310,6 +1351,8 @@ function Dialer({ r }: { r: R }) {
   const acts = r.activities[lead.id] || [];
   const inFlow = r.flow.on && !r.flow.paused;
   const idx = r.leads.findIndex((l) => l.id === lead.id);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setEditing(false); }, [lead.id]);
 
   return (
     <section className="view on" style={{ padding: 0 }}>
@@ -1363,7 +1406,7 @@ function Dialer({ r }: { r: R }) {
                 <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
               )}
             </div>
-            <div className="r"><BookDemo lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><BookDemo lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           {inFlow ? (
@@ -1379,6 +1422,7 @@ function Dialer({ r }: { r: R }) {
               <div className="o"><button className="btn sm primary" onClick={() => r.startFlow()}>Start Flow</button></div></div>
           )}
 
+          {editing ? <LeadEditForm r={r} lead={lead} onDone={() => setEditing(false)} /> : (
           <div className="qgrid">
             <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone
               ? <button className="qv-call" title={`Call ${lead.phone}`} onClick={() => r.startCall(lead.id)}>{Icon.call} {lead.phone}</button>
@@ -1395,6 +1439,7 @@ function Dialer({ r }: { r: R }) {
             <div className="qc"><div className="qk">City</div><div className="qv">{lead.city || <span className="muted">—</span>}</div></div>
             <div className="qc"><div className="qk">Last touch</div><div className="qv">{lead.lastTouch}</div></div>
           </div>
+          )}
 
           <TouchStrip r={r} lead={lead} acts={acts} />
 
@@ -1422,6 +1467,42 @@ function Dialer({ r }: { r: R }) {
 const fmtDur = (s?: number) => { if (s == null) return ''; const m = Math.floor(s / 60); return `${m}:${String(s % 60).padStart(2, '0')}`; };
 const fmtDate = (iso?: string) => { if (!iso) return ''; try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return ''; } };
 const recSid = (url?: string) => url?.match(/Recordings\/(RE[0-9a-fA-F]+)/)?.[1];
+
+function LeadEditForm({ r, lead, onDone }: { r: R; lead: Lead; onDone: () => void }) {
+  const [salon, setSalon] = useState(lead.salon || '');
+  const [name, setName] = useState(lead.contact?.name && lead.contact.name !== '\u2014' ? lead.contact.name : '');
+  const [phone, setPhone] = useState(lead.phone || '');
+  const [email, setEmail] = useState(lead.email || '');
+  const [website, setWebsite] = useState(lead.website || '');
+  const [booking, setBooking] = useState(lead.bookingSystem || '');
+  const [city, setCity] = useState(lead.city || '');
+  const save = () => { r.saveLeadEdits(lead.id, { salon, contactName: name, phone, email, website, bookingSystem: booking, city }); onDone(); };
+  const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', fontSize: 13, background: 'var(--panel)', color: 'var(--ink)' };
+  const field = (label: string, val: string, set: (v: string) => void, ph = '', type = 'text') => (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>{label}</span>
+      <input style={inputStyle} type={type} value={val} placeholder={ph} onChange={(e) => set(e.target.value)} />
+    </label>
+  );
+  return (
+    <div style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 14, background: 'var(--panel)', marginBottom: 4 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {field('Business / salon', salon, setSalon, 'Salon name')}
+        {field('Contact name', name, setName, 'Owner / manager')}
+        {field('Phone', phone, setPhone, '(801) 555-0123', 'tel')}
+        {field('Email', email, setEmail, 'name@salon.com', 'email')}
+        {field('Website', website, setWebsite, 'salon.com')}
+        {field('Booking system', booking, setBooking, 'Vagaro, Boulevard\u2026')}
+        {field('City', city, setCity, 'City, ST')}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+        <button className="btn sm primary" onClick={save}>Save changes</button>
+        <button className="btn sm" onClick={onDone}>Cancel</button>
+        <span style={{ fontSize: 11, color: 'var(--ink3)' }}>Clear a field to remove it. Phone &amp; email also update the contact.</span>
+      </div>
+    </div>
+  );
+}
 
 function TimelineItem({ h }: { h: Activity }) {
   const [showTx, setShowTx] = useState(false);
