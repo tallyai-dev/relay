@@ -290,7 +290,14 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   const schedSet = new Set(r.scheduledLeads.map((l) => l.id));
 
   const filteredRaw = r.activeLeads.filter((l) => {
-    if (q) { const s = q.trim().toLowerCase(); if (!(l.salon.toLowerCase().includes(s) || (l.city || '').toLowerCase().includes(s) || (l.contact?.name || '').toLowerCase().includes(s))) return false; }
+    if (q) {
+      const s = q.trim().toLowerCase();
+      const digits = s.replace(/\D/g, '');
+      const hay = [l.salon, l.city, l.contact?.name, l.email, l.handle, l.phone].map((x) => (x || '').toLowerCase());
+      const phoneDigits = (l.phone || '').replace(/\D/g, '');
+      const hit = hay.some((h) => h.includes(s)) || (!!digits && phoneDigits.includes(digits));
+      if (!hit) return false;
+    }
     if (stage !== 'all' && l.stage !== stage) return false;
     if (booking === 'none') { if (l.bookingSystem) return false; }
     else if (booking !== 'all' && l.bookingSystem !== booking) return false;
@@ -327,7 +334,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
   return (
     <section className="view on">
       <div className="page-head">
-        <div><h1>Salon prospecting — pipeline</h1><p>{r.activeLeads.length} active salons{r.isAdmin && r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
+        <div><h1>Leads</h1><p>{r.activeLeads.length} active salons{r.isAdmin && r.stagedLeads.length > 0 ? <> · <a className="stage-link" onClick={() => r.setView('staging')}>{r.stagedLeads.length} waiting in staging →</a></> : ''}</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={onImport}>{Icon.import}Import leads</button>
           {r.dueLeads.length > 0
@@ -342,7 +349,7 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
       </div>
 
       <div className="lead-filters">
-        <input className="lf-search" placeholder="Search salon, city, or contact…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="lf-search" placeholder="Search salon, city, contact, phone, or @handle…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select value={stage} onChange={(e) => setStage(e.target.value)}>
           <option value="all">All stages</option>
           {(Object.keys(stageLabel) as (keyof typeof stageLabel)[]).map((s) => <option key={s} value={s}>{stageLabel[s]}</option>)}
@@ -408,7 +415,19 @@ function LeadsView({ r, onImport }: { r: R; onImport: () => void }) {
                 <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
                 <td className="muted">{l.lastTouch}</td>
                 <td><span className={`pill ${stagePill[l.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[l.stage]}</span></td>
-                <td><button className="btn sm" onClick={(e) => { e.stopPropagation(); r.setActiveLeadId(l.id); r.setView('dialer'); }}>Open →</button></td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                    <button className="btn sm" disabled={!l.phone} title={l.phone ? `Call ${l.phone}` : 'No phone on file — add one first'}
+                      onClick={() => r.startCall(l.id)}
+                      style={l.phone ? { background: '#2f855a', borderColor: '#2f855a', color: '#fff' } : undefined}>{Icon.call} Call</button>
+                    <select value="" title="Add to a cadence" onChange={(e) => { if (e.target.value) r.assignCadence(l.id, e.target.value); }}
+                      style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '5px 7px', fontSize: 11.5, background: 'var(--panel)', color: 'var(--ink)' }}>
+                      <option value="">Cadence…</option>
+                      {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button className="btn sm" onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }}>Open →</button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
