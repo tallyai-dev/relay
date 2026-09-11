@@ -6,6 +6,7 @@ import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT,
 import { enablePush, pushState, type PushState } from '@/lib/push';
 import { placeCall, normalizePhone } from '@/lib/voice';
 import { openCalendly, CALENDLY_URL } from '@/lib/calendly';
+import { TEXT_TEMPLATES, PRODUCT_TEMPLATES, EMAIL_TEMPLATES_LIB, renderTpl } from '@/lib/templates';
 import { analyzeImport } from '@/lib/csv';
 import { fetchActivityFeed, type FeedActivity } from '@/lib/repo';
 import { BoltMark } from '@/components/Logo';
@@ -1443,6 +1444,120 @@ ${EMAIL_SIGNOFF}`,
   },
 ];
 
+// The prospecting template library, as a sheet on the lead card. Texts send
+// from here (edit, then send); emails and product emails open the composer
+// prefilled. The Product tab is the pick-one flow after "spoke · wants info":
+// pick the product she asked about → the "wants info" text goes now and the
+// matching product email opens as a draft.
+type TplTab = 'text' | 'email' | 'product';
+function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { r: R; lead: Lead; tab?: TplTab; onClose: () => void; onPickText?: (body: string) => void }) {
+  const [tab, setTab] = useState<TplTab>(tab0);
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState<string | null>(null);
+  const [body, setBody] = useState('');
+  const [emailInit, setEmailInit] = useState<{ subject: string; body: string } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const ctx = { lead, me: r.me, calendly: CALENDLY_URL };
+  const norm = (x: string) => x.toLowerCase();
+  const hit = (a: string, b?: string) => !q.trim() || norm(a).includes(norm(q)) || (b ? norm(b).includes(norm(q)) : false);
+  const pickText = (key: string, tpl: string, product?: string) => {
+    const rendered = renderTpl(tpl, { ...ctx, product });
+    if (onPickText) { onPickText(rendered); onClose(); return; }
+    setSel(key); setBody(rendered); setMsg(null);
+  };
+  const sendText = () => {
+    if (!lead.phone || !body.trim()) return;
+    r.sendReply(lead.id, body.trim(), 'text');
+    setMsg('✓ Text sent'); setSel(null); setBody('');
+  };
+  const pickProduct = (p: typeof PRODUCT_TEMPLATES[number]) => {
+    // Text now (if she has a phone), email as a draft to glance at.
+    const info = TEXT_TEMPLATES.find((t) => t.key === 'info')!;
+    if (lead.phone) { r.sendReply(lead.id, renderTpl(info.body, { ...ctx, product: p.product }), 'text'); setMsg(`✓ "Wants info" text sent · ${p.product} email drafted`); }
+    else setMsg(`No phone on file — ${p.product} email drafted`);
+    if (lead.email) setEmailInit({ subject: renderTpl(p.subject, ctx), body: renderTpl(p.body, ctx) });
+    else setMsg((m) => `${m || ''} · no email on file, add one to send`);
+  };
+  return (
+    <div className="overlay on" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal tpl-modal" style={{ maxWidth: 560 }}>
+        <div className="mh"><h3>Templates · {lead.salon}</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="mb tpl-body">
+          <div className="tpl-tabs">
+            <button className={tab === 'text' ? 'on' : ''} onClick={() => setTab('text')}>Texts</button>
+            <button className={tab === 'email' ? 'on' : ''} onClick={() => setTab('email')}>Emails</button>
+            <button className={tab === 'product' ? 'on' : ''} onClick={() => setTab('product')}>Wants info · pick one</button>
+          </div>
+          {tab !== 'product' && <input className="tpl-search" value={q} placeholder="Search a moment — no answer, callback, robot, demo…" onChange={(e) => setQ(e.target.value)} />}
+          {msg && <div className="tpl-msg">{msg}</div>}
+          {tab === 'text' && (
+            <div className="tpl-list">
+              {!lead.phone && <div className="tpl-warn">No phone on file — pick one to copy the wording, or add her number first.</div>}
+              {TEXT_TEMPLATES.filter((t) => hit(t.label, t.body)).map((t) => (
+                <div key={t.key} className={`tpl-item ${sel === t.key ? 'on' : ''}`}>
+                  <button className="tpl-head" onClick={() => pickText(t.key, t.body)}>
+                    <span className="tpl-lab">{t.label}</span><span className="tpl-when">{t.when}</span>
+                    <span className="tpl-prev">{renderTpl(t.body, ctx)}</span>
+                  </button>
+                  {sel === t.key && !onPickText && (
+                    <div className="tpl-edit">
+                      <textarea value={body} onChange={(e) => setBody(e.target.value)} />
+                      <div className="fb-actions">
+                        <button className="btn sm" onClick={() => { navigator.clipboard?.writeText(body).catch(() => {}); setMsg('Copied'); }}>Copy</button>
+                        <button className="btn sm" onClick={() => setSel(null)}>Cancel</button>
+                        <button className="btn primary sm" disabled={!lead.phone || !body.trim()} style={{ background: 'var(--purple)', borderColor: 'var(--purple)' }} onClick={sendText}>Send text</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {tab === 'email' && (
+            <div className="tpl-list">
+              {!lead.email && <div className="tpl-warn">No email on file — enrich the lead or add one, then these open in the composer.</div>}
+              {EMAIL_TEMPLATES_LIB.filter((t) => hit(t.label, t.body)).map((t) => (
+                <div key={t.key} className="tpl-item">
+                  <button className="tpl-head" onClick={() => lead.email ? setEmailInit({ subject: renderTpl(t.subject, ctx), body: renderTpl(t.body, ctx) }) : setMsg('Add an email address first.')}>
+                    <span className="tpl-lab">{t.label}</span>{t.when && <span className="tpl-when">{t.when}</span>}
+                    <span className="tpl-sub">{renderTpl(t.subject, ctx)}</span>
+                    <span className="tpl-prev">{renderTpl(t.body, ctx).split('\n\n')[1] || renderTpl(t.body, ctx)}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {tab === 'product' && (
+            <div className="tpl-list">
+              <div className="tpl-note">She asked for more info. Pick what came up: the <b>&ldquo;wants info&rdquo;</b> text goes now{lead.phone ? ` to ${fmtPhone(lead.phone)}` : ' (no phone on file)'}, and the product email opens as a draft{lead.email ? ` for ${lead.email}` : ' (no email on file)'}.</div>
+              {PRODUCT_TEMPLATES.map((p) => (
+                <div key={p.key} className="tpl-item">
+                  <button className="tpl-head" onClick={() => pickProduct(p)}>
+                    <span className="tpl-lab">{p.product}</span><span className="tpl-when">{p.price}</span>
+                    <span className="tpl-sub">{renderTpl(p.subject, ctx)}</span>
+                    <span className="tpl-prev">{renderTpl(p.body, ctx).split('\n\n')[1]}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {emailInit && lead.email && <EmailComposer r={r} lead={lead} initial={emailInit} onClose={() => setEmailInit(null)} />}
+      </div>
+    </div>
+  );
+}
+
+function TemplatesButton({ r, lead, tab }: { r: R; lead: Lead; tab?: TplTab }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button className="btn sm" onClick={() => setOpen(true)} title="Texts and emails for every prospecting moment">📄 Templates</button>
+      {open && <TemplatesSheet r={r} lead={lead} tab={tab} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
 function QuickEmail({ r, lead }: { r: R; lead: Lead }) {
   const [open, setOpen] = useState(false);
   const hasEmail = !!lead.email;
@@ -1468,12 +1583,14 @@ function BookDemo({ lead }: { lead: Lead }) {
 // In-app email composer: edit the subject/body (start from a template or blank)
 // and send it via Gmail as sales@gettallyai.com. Logged to the lead + threaded
 // into the Inbox; replies sync back. "Open in Gmail" is kept as a fallback.
-function EmailComposer({ r, lead, onClose }: { r: R; lead: Lead; onClose: () => void }) {
-  const [subject, setSubject] = useState(EMAIL_TEMPLATES[0].subject(lead));
-  const [body, setBody] = useState(EMAIL_TEMPLATES[0].body(lead));
+function EmailComposer({ r, lead, onClose, initial }: { r: R; lead: Lead; onClose: () => void; initial?: { subject: string; body: string } }) {
+  const [subject, setSubject] = useState(initial?.subject ?? EMAIL_TEMPLATES[0].subject(lead));
+  const [body, setBody] = useState(initial?.body ?? EMAIL_TEMPLATES[0].body(lead));
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const apply = (t: EmailTemplate) => { setSubject(t.subject(lead)); setBody(t.body(lead)); };
+  const ctx = { lead, me: r.me, calendly: CALENDLY_URL };
+  const applyLib = (t: { subject: string; body: string }) => { setSubject(renderTpl(t.subject, ctx)); setBody(renderTpl(t.body, ctx)); };
   const send = async () => {
     setSending(true); setErr(null);
     const res = await r.sendLeadEmail(lead.id, subject, body);
@@ -1494,7 +1611,9 @@ function EmailComposer({ r, lead, onClose }: { r: R; lead: Lead; onClose: () => 
           <div className="em-tofrom">To <b>{lead.email}</b> · from <b>sales@gettallyai.com</b></div>
           <div className="em-templates">
             <span className="em-tpl-label">Start from:</span>
-            {EMAIL_TEMPLATES.map((t) => <button key={t.key} className="em-tpl" onClick={() => apply(t)}>{t.label}</button>)}
+            {EMAIL_TEMPLATES_LIB.map((t) => <button key={t.key} className="em-tpl" onClick={() => applyLib(t)} title={t.when}>{t.label}</button>)}
+            {PRODUCT_TEMPLATES.map((t) => <button key={t.key} className="em-tpl prod" onClick={() => applyLib(t)} title={t.price}>{t.label}</button>)}
+            {EMAIL_TEMPLATES.map((t) => <button key={t.key} className="em-tpl old" onClick={() => apply(t)}>{t.label}</button>)}
             <button className="em-tpl" onClick={() => { setSubject(''); setBody(''); }}>Blank</button>
           </div>
           <input className="em-subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
@@ -1635,7 +1754,7 @@ function Dialer({ r }: { r: R }) {
                 <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
               )}
             </div>
-            <div className="r"><BookDemo lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><BookDemo lead={lead} /><TemplatesButton r={r} lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           <ChannelRow r={r} lead={lead} />
@@ -2007,15 +2126,17 @@ function FlowBar({ r, lead }: { r: R; lead: Lead }) {
 
 function ComposeText({ r, lead, fallbackFromDm }: { r: R; lead: Lead; fallbackFromDm?: boolean }) {
   const cad = r.cadenceById(lead.cadenceId);
-  const tpl = cad?.steps.find((s) => (s.channel === 'text' || (fallbackFromDm && s.channel === 'dm')) && s.template)?.template || DEFAULT_SMS;
-  const [body, setBody] = useState(renderTemplate(tpl, lead));
+  const tpl0 = cad?.steps.find((s) => (s.channel === 'text' || (fallbackFromDm && s.channel === 'dm')) && s.template)?.template || DEFAULT_SMS;
+  const [body, setBody] = useState(renderTemplate(tpl0, lead));
+  const [tpl, setTpl] = useState(false);
   return (
     <div className="flowbar text compose">
       <div className="compose-head"><span className="fb-badge">{Icon.text} Text · Action {r.flow.actionCount + 1}</span>
         <span className="compose-meta">To {lead.contact?.name === '—' ? lead.contact?.role : lead.contact?.name} · {lead.phone} · review before sending{fallbackFromDm ? ' · DM window closed, sending as a text' : ''}</span></div>
       <textarea value={body} onChange={(e) => setBody(e.target.value)} />
-      <div className="fb-actions"><button className="btn sm" onClick={r.flowSkip}>Skip</button>
+      <div className="fb-actions"><button className="btn sm" onClick={() => setTpl(true)}>📄 Templates</button><button className="btn sm" onClick={r.flowSkip}>Skip</button>
         <button className="btn primary sm" style={{ background: 'var(--purple)', borderColor: 'var(--purple)' }} onClick={() => r.flowSend('text', body)}>Send text</button></div>
+      {tpl && <TemplatesSheet r={r} lead={lead} tab="text" onClose={() => setTpl(false)} onPickText={(b) => setBody(b)} />}
     </div>
   );
 }
@@ -2080,6 +2201,7 @@ function ChannelRow({ r, lead }: { r: R; lead: Lead }) {
   const [emailOpen, setEmailOpen] = useState(false);
   const [text, setText] = useState(false);
   const [textBody, setTextBody] = useState('');
+  const [tplPick, setTplPick] = useState(false);
   const canDm = dmOpen(lead);
   const leftH = lead.lastSocialAt ? Math.max(0, Math.floor((24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime())) / 3600_000)) : 0;
   const bridge = r.useBridge;
@@ -2112,11 +2234,12 @@ function ChannelRow({ r, lead }: { r: R; lead: Lead }) {
       {text && (
         <div className="chrow-compose">
           <textarea value={textBody} placeholder={`Text ${lead.phone}…`} onChange={(e) => setTextBody(e.target.value)} />
-          <div className="fb-actions"><button className="btn sm" onClick={() => setText(false)}>Close</button>
+          <div className="fb-actions"><button className="btn sm" onClick={() => setTplPick(true)}>📄 Templates</button><button className="btn sm" onClick={() => setText(false)}>Close</button>
             <button className="btn primary sm" style={{ background: 'var(--purple)', borderColor: 'var(--purple)' }} disabled={!textBody.trim()} onClick={() => { r.sendReply(lead.id, textBody.trim(), 'text'); setTextBody(''); setText(false); }}>Send text</button></div>
         </div>
       )}
       {emailOpen && <EmailComposer r={r} lead={lead} onClose={() => setEmailOpen(false)} />}
+      {tplPick && <TemplatesSheet r={r} lead={lead} tab="text" onClose={() => setTplPick(false)} onPickText={(b) => setTextBody(b)} />}
     </div>
   );
 }
