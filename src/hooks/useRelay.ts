@@ -8,7 +8,8 @@ import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
 export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile' | 'team';
-export interface EnrichResult { found: boolean; name?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; address?: string; hours?: string[]; error?: string }
+export interface EnrichCandidate { placeId: string; name: string; phone?: string; website?: string; address?: string; city?: string; score: number }
+export interface EnrichResult { found: boolean; sure?: boolean; placeId?: string; candidates?: EnrichCandidate[]; websiteSource?: 'places' | 'instagram' | 'guess' | 'search'; name?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; address?: string; hours?: string[]; error?: string }
 
 const DEFAULT_CADENCE_ID = '11111111-1111-1111-1111-111111111111';
 const SEED_CADENCES: Cadence[] = [
@@ -1002,17 +1003,17 @@ export function useRelay() {
   const enrichableLeads = leads.filter((l) => !l.phone || !l.email || !l.website || !l.bookingSystem);
   const DEMO_BOOKING = ['Vagaro', 'Square Appointments', 'Boulevard', 'Booksy', 'GlossGenius', 'Fresha'];
   // Look a lead up on Google Places; returns what was found (does not save).
-  const enrichLead = useCallback(async (leadId: string): Promise<EnrichResult> => {
+  const enrichLead = useCallback(async (leadId: string, placeId?: string): Promise<EnrichResult> => {
     const lead = leadsRef.current.find((l) => l.id === leadId);
     if (!lead) return { found: false };
     if (!enabled) {
       // Demo mode: fabricate a plausible result so the flow is demonstrable.
       const slug = lead.salon.toLowerCase().replace(/[^a-z0-9]/g, '');
       const bk = DEMO_BOOKING[slug.length % DEMO_BOOKING.length];
-      return { found: true, name: lead.salon, phone: lead.phone || '(303) 555-0148', email: lead.email || `hello@${slug}.com`, website: lead.website || `${slug}.com`, bookingSystem: lead.bookingSystem || bk, city: lead.city || 'Denver, CO', address: `${lead.city || 'Denver, CO'}`, hours: ['Mon–Fri 9 AM–6 PM', 'Sat 9 AM–4 PM', 'Sun closed'] };
+      return { found: true, sure: true, name: lead.salon, phone: lead.phone || '(303) 555-0148', email: lead.email || `hello@${slug}.com`, website: lead.website || `${slug}.com`, bookingSystem: lead.bookingSystem || bk, city: lead.city || 'Denver, CO', address: `${lead.city || 'Denver, CO'}`, hours: ['Mon–Fri 9 AM–6 PM', 'Sat 9 AM–4 PM', 'Sun closed'] };
     }
     try {
-      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ salon: lead.salon, city: lead.city, handle: lead.handle ? lead.handle.replace(/^@+/, '') : undefined }) });
+      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ salon: lead.salon, city: lead.city, handle: lead.handle ? lead.handle.replace(/^@+/, '') : undefined, placeId }) });
       return await res.json();
     } catch { return { found: false, error: 'Lookup failed.' }; }
   }, [enabled]);

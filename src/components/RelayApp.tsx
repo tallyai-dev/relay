@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRelay, isOverdue, type EnrichResult } from '@/hooks/useRelay';
+import { useRelay, isOverdue, type EnrichResult, EnrichCandidate } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch, dmOpen, resolveChannel, IG_DM } from '@/lib/cadence';
 import { enablePush, pushState, type PushState } from '@/lib/push';
@@ -73,9 +73,26 @@ function parseHandle(input: string): { user: string; handle: string; url: string
   return { user: u, handle: u ? '@' + u : '', url: u ? 'https://instagram.com/' + u : '', valid };
 }
 
-interface PullPreview { igFound: boolean; handle: string; name?: string; bio?: string; followers?: number; posts?: number; profilePic?: string; website?: string; phone?: string; email?: string; bookingSystem?: string; city?: string; placesName?: string }
+// When Google isn't sure which listing is the salon, show the top matches and
+// let a human pick instead of taking the first one.
+function CandidatePicker({ candidates, busy, onPick, onNone }: { candidates: EnrichCandidate[]; busy?: boolean; onPick: (placeId: string) => void; onNone?: () => void }) {
+  return (
+    <div className="cand-wrap">
+      <div className="cand-h">Google isn&apos;t sure which one — pick the right listing</div>
+      {candidates.map((c) => (
+        <button key={c.placeId} type="button" className="cand" disabled={busy} onClick={() => onPick(c.placeId)}>
+          <span className="cand-nm">{c.name}</span>
+          <span className="cand-mt">{[c.address, c.phone, c.website].filter(Boolean).join(' · ') || 'no details on the listing'}</span>
+        </button>
+      ))}
+      {onNone && <button type="button" className="btn sm" disabled={busy} onClick={onNone} style={{ alignSelf: 'flex-start' }}>None of these</button>}
+    </div>
+  );
+}
+
+interface PullPreview { igFound: boolean; sure?: boolean; candidates?: EnrichCandidate[]; handle: string; name?: string; bio?: string; followers?: number; posts?: number; profilePic?: string; website?: string; phone?: string; email?: string; bookingSystem?: string; city?: string; placesName?: string }
 // "Is this her?" — what Pull from Instagram found, before it fills the form.
-function PullPreviewCard({ p, onYes, onNo }: { p: PullPreview; onYes: () => void; onNo: () => void }) {
+function PullPreviewCard({ p, onYes, onNo, onPick, busy }: { p: PullPreview; onYes: () => void; onNo: () => void; onPick: (placeId: string) => void; busy?: boolean }) {
   const initials = (p.name || p.handle).replace(/^@/, '').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const facts = [p.phone, p.website, p.bookingSystem, p.city].filter(Boolean);
   return (
@@ -90,10 +107,14 @@ function PullPreviewCard({ p, onYes, onNo }: { p: PullPreview; onYes: () => void
           {facts.length > 0 && <div className="pull-facts">{facts.map((f, i) => <span key={i}>{f}</span>)}</div>}
         </div>
       </div>
-      <div className="pull-q"><span>Is this her?</span>
-        <button type="button" className="btn sm" onClick={onNo}>Not her</button>
-        <button type="button" className="btn sm primary" onClick={onYes}>Yes, use this</button>
-      </div>
+      {p.sure === false && p.candidates && p.candidates.length > 0 ? (
+        <CandidatePicker candidates={p.candidates} busy={busy} onPick={onPick} onNone={onYes} />
+      ) : (
+        <div className="pull-q"><span>Is this her?</span>
+          <button type="button" className="btn sm" onClick={onNo}>Not her</button>
+          <button type="button" className="btn sm primary" onClick={onYes}>Yes, use this</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -127,14 +148,14 @@ function NewLeadModal({ r, onClose, prefill }: { r: R; onClose: () => void; pref
   // Pull the public profile (name, pic, bio, site) + phone/booking off the
   // site — into a preview card first, so you confirm it's her before anything
   // lands in the form.
-  const pull = async () => {
+  const pull = async (placeId?: string) => {
     if (!h.valid) return;
-    setPulling(true); setPullMsg(null); setPreview(null);
+    setPulling(true); setPullMsg(null); if (!placeId) setPreview(null);
     try {
-      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h.user, salon: salon.trim() || undefined, city: city.trim() || undefined }) });
+      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h.user, salon: salon.trim() || undefined, city: city.trim() || undefined, placeId }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j.found) { setPullMsg(j.error || 'Nothing found for that handle yet — fill it in by hand.'); return; }
-      setPreview({ igFound: !!j.igFound, handle: j.handle || h.handle, name: j.igName || j.name, bio: j.bio, followers: j.followers, posts: j.posts, profilePic: j.profilePic, website: j.website, phone: j.phone, email: j.email, bookingSystem: j.bookingSystem, city: j.city, placesName: j.name });
+      setPreview({ igFound: !!j.igFound, sure: j.sure !== false, candidates: j.candidates, handle: j.handle || h.handle, name: j.igName || j.name, bio: j.bio, followers: j.followers, posts: j.posts, profilePic: j.profilePic, website: j.website, phone: j.phone, email: j.email, bookingSystem: j.bookingSystem, city: j.city, placesName: j.name });
     } catch { setPullMsg('Lookup failed.'); }
     finally { setPulling(false); }
   };
@@ -172,12 +193,12 @@ function NewLeadModal({ r, onClose, prefill }: { r: R; onClose: () => void; pref
               : <span style={{ fontSize: 12, color: '#c0503f' }}>Not a valid Instagram handle yet</span>)}
             {h.valid && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                <button type="button" className="btn sm" disabled={pulling} onClick={pull} title="Business name, website, phone and booking system from the public profile + link in bio">{pulling ? 'Pulling…' : '✨ Pull from Instagram'}</button>
+                <button type="button" className="btn sm" disabled={pulling} onClick={() => pull()} title="Business name, website, phone and booking system from the public profile + link in bio">{pulling ? 'Pulling…' : '✨ Pull from Instagram'}</button>
                 {pullMsg && <span style={{ fontSize: 12, color: pullMsg.startsWith('✓') ? '#2f855a' : 'var(--ink3)' }}>{pullMsg}</span>}
               </div>
             )}
           </label>
-          {preview && <PullPreviewCard p={preview} onYes={acceptPreview} onNo={rejectPreview} />}
+          {preview && <PullPreviewCard p={preview} onYes={acceptPreview} onNo={rejectPreview} busy={pulling} onPick={(id) => pull(id)} />}
           {(prefill?.platform === 'tiktok' && prefill.handle) && <div style={{ fontSize: 12, color: 'var(--ink2)' }}>TikTok <b>@{prefill.handle}</b> — TikTok has no DM API, so Relay keeps the handle in the notes and works her by call/text.</div>}
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>Their ask (comment / DM · optional)</span>
@@ -779,17 +800,18 @@ function EnrichView({ r }: { r: R }) {
 
   const enrichAll = async () => {
     const todo = leads.filter((l) => !saved.has(l.id));
-    let filled = 0;
+    let filled = 0; let needPick = 0;
     for (const l of todo) {
       setBulk(`Looking up ${l.salon}…`);
       const res = results[l.id] && results[l.id] !== 'loading' ? (results[l.id] as EnrichResult) : await runOne(l.id);
+      if (res.found && res.sure === false) { needPick++; continue; }
       if (res.found) {
         const f = newFields(l, res);
         if (Object.keys(f).length) { r.saveEnrichment(l.id, f); filled++; }
         setSaved((p) => new Set(p).add(l.id));
       }
     }
-    setBulk(`Done — filled info on ${filled} lead${filled === 1 ? '' : 's'}.`);
+    setBulk(`Done — filled info on ${filled} lead${filled === 1 ? '' : 's'}.${needPick ? ` ${needPick} need${needPick === 1 ? 's' : ''} you to pick the right listing.` : ''}`);
     setTimeout(() => setBulk(null), 5000);
   };
 
@@ -819,7 +841,7 @@ function EnrichView({ r }: { r: R }) {
               <div key={l.id} className={`enr-row ${sel === l.id ? 'on' : ''}`} onClick={() => setSel(l.id)}>
                 <div className="avatar sm" style={{ background: colorFor(i), position: 'relative', overflow: 'visible' }}>{initials(l.salon)}{l.source === 'instagram' && <IgBadge size={14} />}</div>
                 <div className="enr-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}</div></div>
-                {saved.has(l.id) ? <span className="mchip ok">Enriched ✓</span> : missChips(l)}
+                {saved.has(l.id) ? <span className="mchip ok">Enriched ✓</span> : (results[l.id] && results[l.id] !== 'loading' && (results[l.id] as EnrichResult).sure === false) ? <span className="mchip pick">Pick listing</span> : missChips(l)}
                 <DeleteLeadButton r={r} leadId={l.id} label="✕" armedLabel="Delete?" className="enr-del" title={`Delete ${l.salon}`} after={() => { if (sel === l.id) { const rest = leads.filter((x) => x.id !== l.id); setSel(rest[0]?.id || null); } }} />
               </div>
             ))}
@@ -834,6 +856,9 @@ function EnrichView({ r }: { r: R }) {
                 ) : !selRes.found ? (
                   <div className="enr-none">No Google match found for “{selLead.salon}{selLead.city ? `, ${selLead.city}` : ''}”. Try adding a city, or fill it in manually.<button className="btn sm" style={{ marginTop: 12 }} onClick={() => runOne(selLead.id)}>Retry</button></div>
                 ) : (
+                  selRes.sure === false && selRes.candidates && selRes.candidates.length ? (
+                    <CandidatePicker candidates={selRes.candidates} onPick={async (id) => { setResults((p) => ({ ...p, [sel!]: 'loading' })); const res = await r.enrichLead(sel!, id); setResults((p) => ({ ...p, [sel!]: res })); }} />
+                  ) : (
                   <>
                     {selRes.phone && <div className="found"><span className="k">Phone</span><span className="v">{selRes.phone}</span>{selLead.phone ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
                     {selRes.email && <div className="found"><span className="k">Email</span><span className="v">{selRes.email}</span>{selLead.email ? <span className="src">on file</span> : <span className="tick">✓ new</span>}</div>}
@@ -850,8 +875,10 @@ function EnrichView({ r }: { r: R }) {
                       )}
                     </div>
                   </>
+                  )
                 )}
-                <div className="keynote">Data from Google Places. Review before saving — occasionally the top match isn’t the right business.</div>
+                {selRes !== 'loading' && selRes?.websiteSource && selRes.websiteSource !== 'places' && selRes.websiteSource !== 'instagram' && <div className="keynote" style={{ color: '#8a5a00' }}>Website came from a {selRes.websiteSource === 'guess' ? 'booking-site guess' : 'web search'}, not the Google listing — double-check it.</div>}
+                <div className="keynote">Data from Google Places. When Google can’t tell which listing is the salon, Relay asks instead of guessing.</div>
                 <div className="enr-delrow">
                   <DeleteLeadButton r={r} leadId={sel!} label="Delete this lead" after={() => { const rest = leads.filter((x) => x.id !== sel); setSel(rest[0]?.id || null); }} />
                   <span className="enr-delhint">No good match &amp; no info? Remove it.</span>
@@ -1292,11 +1319,14 @@ function DeleteLeadButton({ r, leadId, label = 'Delete', armedLabel = 'Confirm d
 function LeadEnrich({ r, lead }: { r: R; lead: Lead }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const run = async () => {
+  const [cands, setCands] = useState<EnrichCandidate[] | null>(null);
+  const run = async (placeId?: string) => {
     setBusy(true); setMsg(null);
-    const res = await r.enrichLead(lead.id);
+    const res = await r.enrichLead(lead.id, placeId);
     setBusy(false);
     if (!res.found) { setMsg('No Google match'); setTimeout(() => setMsg(null), 4000); return; }
+    if (res.sure === false && res.candidates?.length) { setCands(res.candidates); return; }
+    setCands(null);
     const f: { phone?: string; email?: string; city?: string; website?: string; bookingSystem?: string } = {};
     if (res.phone && !lead.phone) f.phone = res.phone;
     if (res.email && !lead.email) f.email = res.email;
@@ -1310,9 +1340,14 @@ function LeadEnrich({ r, lead }: { r: R; lead: Lead }) {
     setTimeout(() => setMsg(null), 6000);
   };
   return (
-    <div className="lead-enrich">
+    <div className="lead-enrich" style={{ position: 'relative' }}>
       {msg && <span className="lead-enrich-msg">{msg}</span>}
-      <button className="btn sm" onClick={run} disabled={busy} title="Fill missing info from Google">{busy ? 'Enriching…' : '✨ Enrich'}</button>
+      <button className="btn sm" onClick={() => run()} disabled={busy} title="Fill missing info from Google">{busy ? 'Enriching…' : '✨ Enrich'}</button>
+      {cands && (
+        <div className="cand-pop">
+          <CandidatePicker candidates={cands} busy={busy} onPick={(id) => run(id)} onNone={() => { setCands(null); setMsg('Fill it in by hand'); setTimeout(() => setMsg(null), 4000); }} />
+        </div>
+      )}
     </div>
   );
 }

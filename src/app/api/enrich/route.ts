@@ -203,33 +203,65 @@ export async function POST(req: Request) {
     }
 
     // Places returns the top matches; the first isn't always the best record.
-    // Prefer a close name match that actually HAS a website (a suite/partial
-    // listing often matches the name but carries no site), then phone.
+    // Score every result (exact name match, has a website, has a phone, city
+    // agrees) and only auto-pick when the winner is clearly ahead. Otherwise
+    // hand the caller the top few as candidates and let a human choose —
+    // `placeId` on a follow-up call resolves the one they picked.
     const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const target = norm(salon);
-    const p = places
+    const cityN = norm(city);
+    const scored = places
       .map((pl) => {
         const nm = norm(pl.displayName?.text || '');
-        let score = 0;
-        if (nm && nm === target) score += 4;
-        else if (nm && (nm.includes(target) || target.includes(nm))) score += 2;
+        let score = 0; let nameHit = 0;
+        if (nm && nm === target) nameHit = 4;
+        else if (nm && (nm.includes(target) || target.includes(nm))) nameHit = 2;
+        score += nameHit;
         if (pl.websiteUri) score += 3;
         if (pl.nationalPhoneNumber || pl.internationalPhoneNumber) score += 1;
-        return { pl, score };
+        if (cityN && norm(pl.formattedAddress || '').includes(cityN.replace(/[a-z]{2}$/, ''))) score += 1;
+        return { pl, score, nameHit };
       })
-      .sort((a, b) => b.score - a.score)[0].pl;
+      .sort((a, b) => b.score - a.score);
+    const pickedId = String(body.placeId || '');
+    const chosen = pickedId ? scored.find((x) => x.pl.id === pickedId) : undefined;
+    const top = scored[0];
+    const second = scored[1];
+    // Sure = exact name + website, or a clear gap to the runner-up. A single
+    // result with no name match is a guess, not a match.
+    const sure = !!chosen || (top.nameHit > 0 && ((top.score >= 7) || (top.score >= 4 && (!second || top.score - second.score >= 3))));
+    const candidates = scored.slice(0, 4).map(({ pl, score }) => ({
+      placeId: pl.id as string,
+      name: (pl.displayName?.text as string) || '',
+      phone: pl.nationalPhoneNumber || pl.internationalPhoneNumber || undefined,
+      website: pl.websiteUri ? String(pl.websiteUri).replace(/^https?:\/\//, '').replace(/\/$/, '') : undefined,
+      address: pl.formattedAddress || undefined,
+      city: pl.formattedAddress ? cityStateFrom(pl.formattedAddress) : undefined,
+      score,
+    }));
+    if (!sure && !chosen) {
+      // Don't guess: return the choices, plus whatever Instagram gave us.
+      return Response.json({
+        found: true, sure: false, candidates,
+        handle: ig ? `@${ig.username}` : undefined, igFound: !!ig, igName: ig?.name, bio: ig?.biography, followers: ig?.followers, posts: ig?.posts, profilePic: ig?.profilePic,
+        website: ig?.website ? String(ig.website).replace(/^https?:\/\//, '').replace(/\/$/, '') : undefined,
+      });
+    }
+    const p = (chosen || top).pl;
 
     // Resolve a website. Prefer the Google Business Profile's website; when it has
     // none (common — the salon's only web presence is a booking page or a suite
     // listing), fall back to a booking-URL guess, then a web search.
     let websiteUri: string | undefined = p.websiteUri || ig?.website || undefined;
     let bookingSystem: string | undefined;
+    let websiteSource: 'places' | 'instagram' | 'guess' | 'search' | undefined = p.websiteUri ? 'places' : ig?.website ? 'instagram' : undefined;
     if (!websiteUri) {
       const g = await guessBookingSite(salon);
-      if (g.website) { websiteUri = g.website; bookingSystem = g.bookingSystem; }
+      if (g.website) { websiteUri = g.website; bookingSystem = g.bookingSystem; websiteSource = 'guess'; }
     }
     if (!websiteUri) {
       websiteUri = await webSearchSite(salon, city);
+      if (websiteUri) websiteSource = 'search';
     }
 
     const website = websiteUri ? websiteUri.replace(/^https?:\/\//, '').replace(/\/$/, '') : undefined;
@@ -241,6 +273,10 @@ export async function POST(req: Request) {
     if (!bookingSystem) bookingSystem = site.bookingSystem || (websiteUri ? detectBooking(websiteUri) : undefined);
     return Response.json({
       found: true,
+      sure: true,
+      placeId: p.id,
+      candidates,
+      websiteSource,
       name: p.displayName?.text || undefined,
       phone: p.nationalPhoneNumber || p.internationalPhoneNumber || undefined,
       website,
