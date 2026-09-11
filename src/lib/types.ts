@@ -1,5 +1,5 @@
 export type Stage = 'new' | 'working' | 'hot' | 'won' | 'cold';
-export type Channel = 'call' | 'text' | 'email' | 'wait';
+export type Channel = 'call' | 'text' | 'email' | 'wait' | 'dm';
 export type Disposition =
   | 'no_answer' | 'voicemail' | 'connected' | 'wrong_number'
   | 'booked' | 'callback' | 'quote' | 'not_interested';
@@ -10,6 +10,8 @@ export interface Rep {
   email?: string;
   role: 'admin' | 'rep';
   phoneNumber?: string; // their assigned outbound Twilio number (caller ID)
+  forwardTo?: string;   // their CELL (E.164) — the cell bridge rings it, callbacks ring it
+  callMode?: 'bridge' | 'app'; // how Call behaves for this rep (bridge = ring my cell first)
   active?: boolean;     // deactivated reps can't be assigned new work
   leadCount?: number;   // owned leads, filled on the Team screen
 }
@@ -44,6 +46,11 @@ export interface Lead {
   contact?: Contact;
   lastTouch?: string;
   objection?: string;
+  lastRepId?: string;    // who dialed her last — her callback rings them first
+  callbackAt?: string;   // ISO — a promised callback; pushes the rep 5 min before
+  callbackNote?: string;
+  igUserId?: string;     // Instagram-scoped id (we can DM her)
+  lastSocialAt?: string; // ISO — her last DM/comment → 24h DM window
 }
 
 // Disposition-based branching: after a Call step, what each outcome does next.
@@ -98,7 +105,7 @@ export interface Message {
   leadId?: string;
   who: string;
   salon: string;
-  channel: 'text' | 'email';
+  channel: 'text' | 'email' | 'dm';
   direction: 'out' | 'in';
   subject?: string;
   body: string;
@@ -114,7 +121,7 @@ export interface Message {
 // A single unit of work Flow hands the rep, produced by the cadence engine.
 export interface FlowAction {
   leadId: string;
-  channel: 'call' | 'text' | 'email';
+  channel: 'call' | 'text' | 'email' | 'dm';
   attempt?: number;     // for calls: which attempt (1-based)
   totalCalls?: number;  // total call steps in this lead's plan
   stepIndex: number;    // index within the lead's expanded plan

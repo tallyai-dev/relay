@@ -1,4 +1,6 @@
-// POST /api/enrich  { salon, city? }
+import { igBusinessDiscovery } from '@/lib/social';
+
+// POST /api/enrich  { salon, city? , handle? }
 // Looks a business up on the Google Places API (New) and returns the fields we
 // can fill: phone, website, a tidy "City, ST", the full address, and hours.
 // Returns { found: false } when nothing matches or the key isn't configured.
@@ -155,13 +157,26 @@ function cityStateFrom(addr: string): string | undefined {
 
 export async function POST(req: Request) {
   const key = process.env.GOOGLE_PLACES_API_KEY;
-  if (!key) return Response.json({ found: false, error: 'Places API not configured.' }, { status: 503 });
-
   let body: any = {};
   try { body = await req.json(); } catch { /* ignore */ }
-  const salon = String(body.salon || '').trim();
+  let salon = String(body.salon || '').trim();
   const city = String(body.city || '').trim();
-  if (!salon) return Response.json({ found: false, error: 'Salon name required.' }, { status: 400 });
+
+  // Instagram handle → public profile (business_discovery) first: it gives the
+  // real business name + website + bio, which then feeds the Places lookup.
+  const handle = String(body.handle || '').replace(/^@+/, '').trim();
+  let ig: { username: string; name?: string; biography?: string; website?: string; followers?: number } | null = null;
+  if (handle) {
+    ig = await igBusinessDiscovery(handle);
+    if (ig?.name && (!salon || salon === `@${handle}` || salon === handle)) salon = ig.name;
+  }
+  if (!salon && !ig) return Response.json({ found: false, error: 'Salon name or Instagram handle required.' }, { status: 400 });
+  if (!key) {
+    // No Places key: still return whatever Instagram gave us.
+    if (ig) return Response.json({ found: true, name: ig.name, website: ig.website, bio: ig.biography, followers: ig.followers, handle: `@${ig.username}`, ...(ig.website ? await scanSite(ig.website) : {}) });
+    return Response.json({ found: false, error: 'Places API not configured.' }, { status: 503 });
+  }
+  if (!salon) salon = `@${handle}`;
 
   const textQuery = city ? `${salon} ${city}` : salon;
   try {
@@ -182,7 +197,10 @@ export async function POST(req: Request) {
     }
     const data = await res.json();
     const places: any[] = data?.places || [];
-    if (!places.length) return Response.json({ found: false });
+    if (!places.length) {
+      if (ig) return Response.json({ found: true, name: ig.name, website: ig.website, bio: ig.biography, followers: ig.followers, handle: `@${ig.username}`, ...(ig.website ? await scanSite(ig.website) : {}) });
+      return Response.json({ found: false });
+    }
 
     // Places returns the top matches; the first isn't always the best record.
     // Prefer a close name match that actually HAS a website (a suite/partial
@@ -204,7 +222,7 @@ export async function POST(req: Request) {
     // Resolve a website. Prefer the Google Business Profile's website; when it has
     // none (common — the salon's only web presence is a booking page or a suite
     // listing), fall back to a booking-URL guess, then a web search.
-    let websiteUri: string | undefined = p.websiteUri || undefined;
+    let websiteUri: string | undefined = p.websiteUri || ig?.website || undefined;
     let bookingSystem: string | undefined;
     if (!websiteUri) {
       const g = await guessBookingSite(salon);
@@ -231,6 +249,9 @@ export async function POST(req: Request) {
       city: p.formattedAddress ? cityStateFrom(p.formattedAddress) : undefined,
       address: p.formattedAddress || undefined,
       hours: p.regularOpeningHours?.weekdayDescriptions || undefined,
+      handle: ig ? `@${ig.username}` : undefined,
+      bio: ig?.biography,
+      followers: ig?.followers,
     });
   } catch (e: any) {
     console.error('enrich exception', e?.message);

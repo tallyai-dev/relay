@@ -2,8 +2,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
-import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL, INSTAGRAM_CADENCE_ID, IG_SMS, IG_EMAIL_BODY, IG_EMAIL_SUBJECT } from '@/lib/cadence';
-import { repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, createLead, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
+import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL, INSTAGRAM_CADENCE_ID, IG_SMS, IG_DM, IG_EMAIL_BODY, IG_EMAIL_SUBJECT, resolveChannel, dmOpen } from '@/lib/cadence';
+import { authHeaders, setLeadCallback, repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, createLead, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
@@ -26,7 +26,7 @@ const SEED_CADENCES: Cadence[] = [
     id: INSTAGRAM_CADENCE_ID,
     name: 'Instagram \u2014 warm demo',
     steps: [
-      { position: 0, channel: 'text', waitMinutes: 0, template: IG_SMS },
+      { position: 0, channel: 'dm', waitMinutes: 0, template: IG_DM },
       { position: 1, channel: 'call', waitMinutes: 120 },
       { position: 2, channel: 'text', waitMinutes: 1440, template: IG_SMS },
       { position: 3, channel: 'email', waitMinutes: 1440, template: IG_EMAIL_BODY, subject: IG_EMAIL_SUBJECT },
@@ -35,7 +35,9 @@ const SEED_CADENCES: Cadence[] = [
   },
 ];
 export interface RecentDial { id: string; number: string; kind: 'call' | 'text'; body?: string; time: string; leadId?: string; salon?: string }
-export type FlowPhase = 'action' | 'incall' | 'dispo' | 'connected' | 'note';
+export type FlowPhase = 'action' | 'incall' | 'dispo' | 'connected' | 'callback' | 'note';
+// What the share sheet / a pasted link handed us (Add-to-Relay from Instagram or TikTok).
+export interface ShareIntent { platform: 'instagram' | 'tiktok' | null; handle: string; text: string; url: string }
 interface QueueItem { leadId: string; plan: Channel[]; steps: CadenceStep[]; step: number }
 interface FlowState {
   on: boolean;
@@ -50,7 +52,7 @@ interface FlowState {
   notice: string | null; // transient "salon done → next" nudge
   done: boolean;         // whole due list worked for the day
 }
-interface ActiveCall { leadId: string; direction: 'out' | 'in'; viaFlow: boolean; incomingCall?: any }
+interface ActiveCall { leadId: string; direction: 'out' | 'in'; viaFlow: boolean; incomingCall?: any; bridge?: boolean }
 
 // A real UUID so an optimistic activity and its Supabase row can share one id —
 // that's what lets the realtime echo (and the recording's later UPDATE) merge
@@ -75,8 +77,13 @@ const fmtDueLabel = (d: Date) => d.toLocaleDateString(undefined, { weekday: 'sho
 export const isOverdue = (l: Lead) => !!l.nextActionAt && new Date(l.nextActionAt).getTime() < startOfToday();
 // A lead is "due" if it's deployed into a cadence, still in rotation, and either
 // never scheduled or its snooze has expired. Staged leads are never due.
+const callbackDueToday = (l: Lead) => !!l.callbackAt && new Date(l.callbackAt).getTime() <= endOfToday();
 const leadIsDue = (l: Lead) =>
-  l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && !l.cadenceCompletedAt && (!l.nextActionAt || new Date(l.nextActionAt).getTime() <= endOfToday());
+  l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && (callbackDueToday(l) || (!l.cadenceCompletedAt && (!l.nextActionAt || new Date(l.nextActionAt).getTime() <= endOfToday())));
+// Ranking helpers for the daily queue: callbacks that are due right now first,
+// then fresh social (DM'd/commented in the last 24h), then Instagram, then warm.
+const callbackHot = (l: Lead) => !!l.callbackAt && new Date(l.callbackAt).getTime() <= Date.now() + 15 * 60_000;
+const socialHot = (l: Lead) => !!l.lastSocialAt && Date.now() - new Date(l.lastSocialAt).getTime() < 24 * 3_600_000;
 const leadIsScheduled = (l: Lead) =>
   l.deployed !== false && l.stage !== 'won' && l.stage !== 'cold' && !!l.nextActionAt && new Date(l.nextActionAt).getTime() > endOfToday();
 
@@ -100,6 +107,8 @@ export function useRelay() {
   const [reps, setReps] = useState<Rep[]>([]);
   const [cadences, setCadences] = useState<Cadence[]>(SEED_CADENCES);
   const [recentDials, setRecentDials] = useState<RecentDial[]>([]);
+  const [shareIntent, setShareIntent] = useState<ShareIntent | null>(null);
+  const [pendingCallLead, setPendingCallLead] = useState<string | null>(null); // from a reminder tap (?lead=&call=1)
   const leadsRef = useRef<Lead[]>(leads);
   leadsRef.current = leads;
   const cadencesRef = useRef<Cadence[]>(cadences);
@@ -161,6 +170,31 @@ export function useRelay() {
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  // Deep links: a reminder push opens /?lead=<id>&call=1 (jump to that lead with
+  // Call primed); the PWA share target opens /?text=…&url=… from Instagram or
+  // TikTok (Add-to-Relay prefilled). Both are one-shot and scrubbed from the URL.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const q = new URLSearchParams(window.location.search);
+    const leadId = q.get('lead');
+    const text = q.get('text') || '';
+    const url = q.get('url') || '';
+    const title = q.get('title') || '';
+    if (!leadId && !text && !url && !title) return;
+    if (leadId) {
+      setActiveLeadId(leadId); setView('dialer');
+      if (q.get('call') === '1') setPendingCallLead(leadId);
+    } else {
+      const blob = [url, text, title].join(' ');
+      const m = blob.match(/instagram\.com\/(?!(?:p|reel|reels|explore|stories|accounts)\/)([A-Za-z0-9._]{1,30})/i) || blob.match(/tiktok\.com\/@([A-Za-z0-9._]{1,30})/i) || blob.match(/(?:^|\s)@([A-Za-z0-9._]{2,30})/);
+      const platform = /tiktok\.com/i.test(blob) ? 'tiktok' : (/instagram\.com/i.test(blob) || m ? 'instagram' : null);
+      setShareIntent({ platform, handle: m ? m[1] : '', text: text || title, url });
+    }
+    try { window.history.replaceState({}, '', window.location.pathname); } catch { /* ignore */ }
+  }, []);
+  const clearShareIntent = useCallback(() => setShareIntent(null), []);
+  const clearPendingCall = useCallback(() => setPendingCallLead(null), []);
 
   // Pull Gmail replies into the Inbox whenever it's opened (no-op unless Gmail is
   // configured). New inbound rows arrive via the realtime messages subscription.
@@ -350,7 +384,11 @@ export function useRelay() {
       .filter((l) => leadIsDue(l) && bookMatch(l))
       .filter((l) => !idSet || idSet.has(l.id))
       .sort((a, b) => {
-        // Fresh Instagram leads first, then warm (opened/clicked), then most-overdue.
+        // Callbacks due now, then fresh social, then Instagram, then warm, then most-overdue.
+        const ca = callbackHot(a) ? 0 : 1; const cb = callbackHot(b) ? 0 : 1;
+        if (ca !== cb) return ca - cb;
+        const sa = socialHot(a) ? 0 : 1; const sb = socialHot(b) ? 0 : 1;
+        if (sa !== sb) return sa - sb;
         const ia = a.source === 'instagram' ? 0 : 1;
         const ib = b.source === 'instagram' ? 0 : 1;
         if (ia !== ib) return ia - ib;
@@ -474,6 +512,24 @@ export function useRelay() {
     setActiveCall({ leadId, direction: 'out', viaFlow: false });
   }, []);
 
+  // Cell bridge: Relay rings MY cell, then dials her from the Relay number.
+  // Returns the server's answer so the call panel can show "ringing your cell".
+  const bridgeCall = useCallback(async (leadId: string): Promise<{ ok: boolean; error?: string; code?: string }> => {
+    const lead = leadsRef.current.find((l) => l.id === leadId);
+    if (!lead?.phone) return { ok: false, error: 'No phone on file for this lead.' };
+    if (!meRef.current?.id) return { ok: false, error: 'Sign in to place calls.' };
+    try {
+      const res = await fetch('/api/voice/bridge', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ leadId, to: lead.phone }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: j.error || `Could not place the call (${res.status})`, code: j.code };
+      setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, lastRepId: meRef.current?.id } : l)));
+      return { ok: true };
+    } catch { return { ok: false, error: 'Network error — the call was not placed.' }; }
+  }, []);
+  // Does Call ring my cell (bridge) or the in-app dialer? Bridge is the default
+  // for anyone with a cell on file; the Team screen flips it per rep.
+  const useBridge = !!me?.forwardTo && me?.callMode !== 'app';
+
   // Called by the live CallPanel's "End & log" (both outbound-flow and inbound).
   const endCall = useCallback(() => {
     const ac = activeCall;
@@ -528,6 +584,13 @@ export function useRelay() {
       return res.ok ? { ok: true, messageId: j.messageId } : { ok: false, error: j.error || `Send failed (${res.status})` };
     } catch { return { ok: false, error: 'Network error — send did not go through.' }; }
   }, []);
+  const sendDmApi = useCallback(async (leadId: string, body: string): Promise<{ ok: boolean; messageId?: string; error?: string; code?: string }> => {
+    try {
+      const res = await fetch('/api/social/dm/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ leadId, body, repId: meRef.current?.id }) });
+      const j = await res.json().catch(() => ({}));
+      return res.ok ? { ok: true, messageId: j.messageId } : { ok: false, error: j.error || `DM failed (${res.status})`, code: j.code };
+    } catch { return { ok: false, error: 'Network error — DM did not go through.' }; }
+  }, []);
   const sendEmailApi = useCallback(async (to: string, subject: string | undefined, body: string, leadId?: string): Promise<{ ok: boolean; messageId?: string; error?: string }> => {
     try {
       const res = await fetch('/api/email/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to, subject, body, leadId }) });
@@ -545,21 +608,24 @@ export function useRelay() {
     });
   }, []);
 
-  const sendReply = useCallback((leadId: string, body: string) => {
+  const sendReply = useCallback((leadId: string, body: string, force?: 'text' | 'email' | 'dm') => {
     const lead = leadsRef.current.find((l) => l.id === leadId);
     const thread = messages.filter((m) => m.leadId === leadId);
-    const channel = (thread.length ? thread[thread.length - 1].channel : 'text') as 'text' | 'email';
+    let channel = (force || (thread.length ? thread[thread.length - 1].channel : 'text')) as 'text' | 'email' | 'dm';
+    // A DM thread whose 24h window closed answers by text (or email) instead.
+    if (channel === 'dm' && lead && !dmOpen(lead)) channel = lead.phone ? 'text' : 'email';
     const tempId = uid();
     setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead?.salon || '', channel, direction: 'out', body, time: 'now', isRead: true, pending: true, phone: lead?.phone }]);
-    addActivity(leadId, { kind: channel, direction: 'out', ty: `${channel === 'email' ? 'Email' : 'Text'} reply sent`, time: 'Just now', body: `"${body}"` });
+    addActivity(leadId, { kind: channel === 'dm' ? 'text' : channel, direction: 'out', ty: `${channel === 'email' ? 'Email' : channel === 'dm' ? 'Instagram DM' : 'Text'} reply sent`, time: 'Just now', body: `"${body}"` });
     const lid = enabled ? leadId : undefined;
     (async () => {
       let r: { ok: boolean; messageId?: string; error?: string };
-      if (channel === 'text') r = lead?.phone ? await sendSms(lead.phone, body, lid) : { ok: false, error: 'No phone on file for this lead.' };
+      if (channel === 'dm') r = enabled ? await sendDmApi(leadId, body) : { ok: true };
+      else if (channel === 'text') r = lead?.phone ? await sendSms(lead.phone, body, lid) : { ok: false, error: 'No phone on file for this lead.' };
       else r = lead?.email ? await sendEmailApi(lead.email, 'Re: Relay', body, lid) : { ok: false, error: 'No email on file for this lead.' };
       reconcileSent(tempId, r);
     })();
-  }, [messages, addActivity, enabled, sendSms, sendEmailApi, reconcileSent]);
+  }, [messages, addActivity, enabled, sendSms, sendDmApi, sendEmailApi, reconcileSent]);
 
   // Reply within a thread. Lead threads go through sendReply; phone-only threads
   // (key "tel:<digits>") send straight to that number and thread by phone.
@@ -580,11 +646,12 @@ export function useRelay() {
     const lid = enabled ? m.leadId : undefined;
     (async () => {
       let r: { ok: boolean; messageId?: string; error?: string };
-      if (m.channel === 'text') r = lead?.phone ? await sendSms(lead.phone, m.body, lid) : { ok: false, error: 'No phone on file.' };
+      if (m.channel === 'dm') r = m.leadId ? await sendDmApi(m.leadId, m.body) : { ok: false, error: 'No lead.' };
+      else if (m.channel === 'text') r = lead?.phone ? await sendSms(lead.phone, m.body, lid) : { ok: false, error: 'No phone on file.' };
       else r = lead?.email ? await sendEmailApi(lead.email, m.subject, m.body, lid) : { ok: false, error: 'No email on file.' };
       reconcileSent(messageId, r);
     })();
-  }, [messages, enabled, sendSms, sendEmailApi, reconcileSent]);
+  }, [messages, enabled, sendSms, sendDmApi, sendEmailApi, reconcileSent]);
 
   // ── Inbound calls ──────────────────────────────────────────────────────────
   const ringInbound = useCallback((leadId: string, call?: any) => setInbound({ leadId, call }), []);
@@ -609,14 +676,23 @@ export function useRelay() {
     });
   }, [addActivity]);
 
-  const flowSend = useCallback((channel: 'text' | 'email', body: string, subject?: string) => {
+  const flowSend = useCallback((channelIn: 'text' | 'email' | 'dm', body: string, subject?: string) => {
     if (!current) return;
     const lead = leadById(current.leadId);
     const leadId = current.leadId;
-    setStats((s) => (channel === 'text' ? { ...s, texts: s.texts + 1 } : { ...s, emails: s.emails + 1 }));
+    // A DM step silently becomes a text when her Instagram window is closed.
+    const channel = (lead ? resolveChannel(channelIn, lead) : channelIn) as 'text' | 'email' | 'dm';
+    if (channel === 'dm' && lead && !dmOpen(lead)) {
+      // Window closed and nothing to fall back to — skip the step, say why, move on.
+      addActivity(leadId, { kind: 'note', ty: 'DM step skipped · ⚡Flow', time: 'Just now', body: 'Her Instagram window is closed and there is no phone or email on file.' });
+      setFlow((f) => ({ ...f, notice: null }));
+      advance('onward');
+      return;
+    }
+    setStats((s) => (channel === 'email' ? { ...s, emails: s.emails + 1 } : { ...s, texts: s.texts + 1 }));
     addActivity(leadId, {
-      kind: channel, direction: 'out',
-      ty: channel === 'text' ? 'Text sent · ⚡Flow' : 'Email sent · ⚡Flow',
+      kind: channel === 'dm' ? 'text' : channel, direction: 'out',
+      ty: channel === 'text' ? 'Text sent · ⚡Flow' : channel === 'dm' ? 'Instagram DM sent · ⚡Flow' : 'Email sent · ⚡Flow',
       time: 'Just now', body: subject ? `${subject} — ${body}` : body,
     });
     // Optimistically thread it into the Inbox, then reconcile on the provider reply.
@@ -625,13 +701,30 @@ export function useRelay() {
     const lid = enabled ? leadId : undefined;
     (async () => {
       let r: { ok: boolean; messageId?: string; error?: string };
-      if (channel === 'text') r = lead?.phone ? await sendSms(lead.phone, body, lid) : { ok: false, error: 'No phone on file for this lead.' };
+      if (channel === 'dm') r = enabled ? await sendDmApi(leadId, body) : { ok: true };
+      else if (channel === 'text') r = lead?.phone ? await sendSms(lead.phone, body, lid) : { ok: false, error: 'No phone on file for this lead.' };
       else r = lead?.email ? await sendEmailApi(lead.email, subject, body, lid) : { ok: false, error: 'No email on file for this lead.' };
       reconcileSent(tempId, r);
     })();
     setFlow((f) => ({ ...f, actionCount: f.actionCount + 1, notice: null }));
     advance('onward');
-  }, [current, addActivity, advance, leadById, enabled, sendSms, sendEmailApi, reconcileSent]);
+  }, [current, addActivity, advance, leadById, enabled, sendSms, sendDmApi, sendEmailApi, reconcileSent]);
+
+  // One-off Instagram DM from the lead card. Threads into the Inbox + logs it.
+  const sendLeadDm = useCallback(async (leadId: string, body: string): Promise<{ ok: boolean; error?: string; code?: string }> => {
+    const lead = leadById(leadId);
+    if (!lead) return { ok: false, error: 'Lead not found.' };
+    if (!dmOpen(lead)) return { ok: false, error: lead.igUserId ? 'Her 24-hour DM window is closed — text her instead.' : 'No Instagram conversation yet — she has to DM or comment first.', code: 'window_closed' };
+    const tempId = uid();
+    setMessages((prev) => [...prev, { id: tempId, leadId, who: 'You', salon: lead.salon || '', channel: 'dm', direction: 'out', body, time: 'now', isRead: true, pending: true, phone: lead.phone }]);
+    const res = enabled ? await sendDmApi(leadId, body) : { ok: true };
+    reconcileSent(tempId, res);
+    if (res.ok) {
+      setStats((s) => ({ ...s, texts: s.texts + 1 }));
+      addActivity(leadId, { kind: 'text', direction: 'out', ty: 'Instagram DM sent', time: 'Just now', body: `"${body}"` });
+    }
+    return res;
+  }, [leadById, enabled, sendDmApi, reconcileSent, addActivity]);
 
   // Send a one-off email to a lead from the salon card (via Gmail). Threads it
   // into the Inbox + logs it, and only counts/logs on a successful send.
@@ -713,8 +806,28 @@ export function useRelay() {
   }, [current, applyDispo]);
 
   const flowConnected = useCallback((kind: 'booked' | 'callback' | 'not_interested') => {
+    if (kind === 'callback') { setFlow((f) => ({ ...f, phase: 'callback' })); return; } // pick a time first
     applyDispo(kind);
   }, [applyDispo]);
+
+  // A promised callback = a real reminder. Stores the time on the lead (the
+  // minute tick pushes the rep 5 min before), then runs the normal "callback"
+  // branch. Outside Flow (the lead card) it just sets/clears the reminder.
+  const setCallback = useCallback((leadId: string, iso: string | null, note?: string) => {
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, callbackAt: iso || undefined, callbackNote: iso ? note : undefined } : l)));
+    if (enabled) setLeadCallback(leadId, iso, note);
+    if (iso) {
+      const when = new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      addActivity(leadId, { kind: 'note', ty: `Callback set · ${when}`, time: 'Just now', body: note ? `Reminder: ${note}` : 'Reminder set — Relay pushes your phone 5 min before.' });
+    }
+  }, [enabled, addActivity]);
+  const confirmFlowCallback = useCallback((iso: string, note?: string) => {
+    if (!current) return;
+    setCallback(current.leadId, iso, note);
+    applyDispo('callback');
+  }, [current, setCallback, applyDispo]);
+  const cancelFlowCallback = useCallback(() => setFlow((f) => ({ ...f, phase: 'connected' })), []);
+  const callbackLeads = useMemo(() => leads.filter((l) => !!l.callbackAt && l.stage !== 'won' && bookMatch(l)).sort((a, b) => new Date(a.callbackAt!).getTime() - new Date(b.callbackAt!).getTime()), [leads, bookMatch]);
 
   const saveNote = useCallback((text: string) => {
     if (flow.noteActivityId && text.trim()) {
@@ -833,7 +946,7 @@ export function useRelay() {
   }, [enabled]);
 
   // Edit a rep (number, role, active, name) with optimistic local update.
-  const updateRep = useCallback((repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean }) => {
+  const updateRep = useCallback((repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean; forwardTo?: string; callMode?: 'bridge' | 'app' }) => {
     setReps((prev) => prev.map((rp) => (rp.id === repId ? { ...rp, ...patch } : rp)));
     if (enabled) updateRepRepo(repId, patch);
   }, [enabled]);
@@ -899,7 +1012,7 @@ export function useRelay() {
       return { found: true, name: lead.salon, phone: lead.phone || '(303) 555-0148', email: lead.email || `hello@${slug}.com`, website: lead.website || `${slug}.com`, bookingSystem: lead.bookingSystem || bk, city: lead.city || 'Denver, CO', address: `${lead.city || 'Denver, CO'}`, hours: ['Mon–Fri 9 AM–6 PM', 'Sat 9 AM–4 PM', 'Sun closed'] };
     }
     try {
-      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ salon: lead.salon, city: lead.city }) });
+      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ salon: lead.salon, city: lead.city, handle: lead.handle ? lead.handle.replace(/^@+/, '') : undefined }) });
       return await res.json();
     } catch { return { found: false, error: 'Lookup failed.' }; }
   }, [enabled]);
@@ -946,6 +1059,10 @@ export function useRelay() {
 
   // ── Due-today scheduler ──────────────────────────────────────────────────────
   const dueLeads = leads.filter((l) => leadIsDue(l) && bookMatch(l)).sort((a, b) => {
+    const ca = callbackHot(a) ? 0 : 1; const cb = callbackHot(b) ? 0 : 1;
+    if (ca !== cb) return ca - cb;
+    const sa = socialHot(a) ? 0 : 1; const sb = socialHot(b) ? 0 : 1;
+    if (sa !== sb) return sa - sb;
     const ia = a.source === 'instagram' ? 0 : 1;
     const ib = b.source === 'instagram' ? 0 : 1;
     if (ia !== ib) return ia - ib; // fresh Instagram leads sit at the top of the session
@@ -1017,7 +1134,7 @@ export function useRelay() {
 
   // Create a lead from scratch (New lead form). A handle tags it source=instagram
   // (avatar badge). Opens it in the dialer so you can call right away.
-  const addLead = useCallback(async (fields: { salon: string; contactName?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; handle?: string; cadenceId?: string }): Promise<Lead | null> => {
+  const addLead = useCallback(async (fields: { salon: string; contactName?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; handle?: string; cadenceId?: string; notes?: string }): Promise<Lead | null> => {
     if (enabled) {
       const lead = await createLead({ ...fields, ownerRepId: meRef.current?.id });
       if (lead) { setLeads((prev) => [...prev, lead]); setActiveLeadId(lead.id); setView('dialer'); }
@@ -1027,7 +1144,7 @@ export function useRelay() {
     const lead: Lead = {
       id: 'new' + Date.now(), salon: fields.salon, city: fields.city || '', phone: fields.phone || '',
       email: fields.email || undefined, website: fields.website || undefined, bookingSystem: fields.bookingSystem || undefined,
-      handle: h ? '@' + h : undefined, source: h ? 'instagram' : undefined,
+      handle: h ? '@' + h : undefined, source: h ? 'instagram' : undefined, notes: fields.notes,
       stage: 'new', cadenceId: fields.cadenceId || DEFAULT_CADENCE_ID, cadencePos: 0,
       contact: { id: 'c', name: fields.contactName || '\u2014', role: 'Owner', phone: fields.phone, email: fields.email }, lastTouch: 'New',
     };
@@ -1042,7 +1159,9 @@ export function useRelay() {
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow, sendLeadEmail,
     addActivity, setStage,
     messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, sendThreadReply, retrySend, threadKeyForMessage,
-    activeCall, startCall, inbound, ringInbound, simInbound, answerInbound, declineInbound,
+    activeCall, startCall, bridgeCall, useBridge, inbound, ringInbound, simInbound, answerInbound, declineInbound,
+    sendLeadDm, setCallback, confirmFlowCallback, cancelFlowCallback, callbackLeads,
+    shareIntent, clearShareIntent, pendingCallLead, clearPendingCall,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany, moveCadenceLeads,
     book, setBook,
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead, addLead,

@@ -17,16 +17,16 @@ export async function fetchMe(): Promise<Rep | null> {
   const { data: u } = await sb.auth.getUser();
   const uid = u.user?.id;
   if (!uid) return null;
-  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active').eq('auth_user_id', uid).maybeSingle();
-  return data ? { id: data.id, name: data.name, email: data.email, role: data.role, phoneNumber: data.phone_number || undefined, active: data.active ?? true } : null;
+  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active,forward_to,call_mode').eq('auth_user_id', uid).maybeSingle();
+  return data ? { id: data.id, name: data.name, email: data.email, role: data.role, phoneNumber: data.phone_number || undefined, active: data.active ?? true, forwardTo: data.forward_to || undefined, callMode: data.call_mode || 'bridge' } : null;
 }
 
 // Reps visible to the current user (admins see all; reps see themselves).
 export async function fetchReps(): Promise<Rep[]> {
   const sb = supabaseBrowser();
   if (!sb) return [];
-  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active').order('name');
-  return (data || []).map((r: any) => ({ id: r.id, name: r.name, email: r.email, role: r.role, phoneNumber: r.phone_number || undefined, active: r.active ?? true }));
+  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active,forward_to,call_mode').order('name');
+  return (data || []).map((r: any) => ({ id: r.id, name: r.name, email: r.email, role: r.role, phoneNumber: r.phone_number || undefined, active: r.active ?? true, forwardTo: r.forward_to || undefined, callMode: r.call_mode || 'bridge' }));
 }
 
 // How many leads each rep owns (admin Team screen). One grouped read.
@@ -46,7 +46,7 @@ export async function fetchRepLeadCounts(): Promise<Record<string, number>> {
 
 // Admin edits to a rep row (number, role, active, name). Allowed by the reps
 // RLS update policy for admins; no server endpoint needed.
-export async function updateRep(repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean }): Promise<void> {
+export async function updateRep(repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean; forwardTo?: string; callMode?: 'bridge' | 'app' }): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
   const row: any = {};
@@ -54,6 +54,8 @@ export async function updateRep(repId: string, patch: { name?: string; role?: 'a
   if (patch.role !== undefined) row.role = patch.role;
   if (patch.phoneNumber !== undefined) row.phone_number = patch.phoneNumber || null;
   if (patch.active !== undefined) row.active = patch.active;
+  if (patch.forwardTo !== undefined) row.forward_to = patch.forwardTo ? (toE164(patch.forwardTo) ?? patch.forwardTo) : null;
+  if (patch.callMode !== undefined) row.call_mode = patch.callMode;
   const { error } = await sb.from('reps').update(row).eq('id', repId);
   if (error) console.error('updateRep', error);
 }
@@ -118,6 +120,15 @@ export async function signOut(): Promise<void> {
 const DEFAULT_CADENCE = '11111111-1111-1111-1111-111111111111';
 export const INSTAGRAM_CADENCE = '22222222-2222-2222-2222-222222222222';
 
+// Bearer header for API routes that must know WHO is calling (bridge, push).
+export async function authHeaders(): Promise<Record<string, string>> {
+  const sb = supabaseBrowser();
+  if (!sb) return {};
+  const { data } = await sb.auth.getSession();
+  const t = data.session?.access_token;
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 function rowToLead(row: any): Lead {
   const cs = row.contacts || [];
   const c = cs.find((x: any) => x.is_primary) || cs[0];
@@ -145,6 +156,11 @@ function rowToLead(row: any): Lead {
       : { id: 'c', name: '—', role: '—' },
     objection: '—',
     lastTouch: relTime(row.updated_at),
+    lastRepId: row.last_rep_id || undefined,
+    callbackAt: row.callback_at || undefined,
+    callbackNote: row.callback_note || undefined,
+    igUserId: row.ig_user_id || undefined,
+    lastSocialAt: row.last_social_at || undefined,
   };
 }
 
@@ -611,6 +627,14 @@ export async function updateLeadFields(leadId: string, patch: {
 }
 
 // Snooze a lead: set its next-due timestamp N days out (null clears / makes due now).
+// A promised callback: the time she asked for (+ why). Clearing the notified
+// stamp re-arms the push. null clears it.
+export async function setLeadCallback(leadId: string, iso: string | null, note?: string): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb) return;
+  await sb.from('leads').update({ callback_at: iso, callback_note: iso ? (note || null) : null, callback_notified_at: null }).eq('id', leadId);
+}
+
 export async function setLeadNextAction(leadId: string, iso: string | null): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;

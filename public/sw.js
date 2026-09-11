@@ -20,3 +20,32 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(request))
   );
 });
+
+// ── Push (callback reminders) ────────────────────────────────────────────────
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = { title: 'Relay', body: event.data ? event.data.text() : '' }; }
+  const title = data.title || 'Relay';
+  const opts = {
+    body: data.body || '',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: data.tag || 'relay',
+    renotify: true,
+    data: { url: data.url || '/' },
+  };
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ('focus' in c) { c.navigate ? c.navigate(url).catch(() => {}) : null; return c.focus(); }
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});

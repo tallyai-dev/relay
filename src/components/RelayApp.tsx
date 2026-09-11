@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRelay, isOverdue, type EnrichResult } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
-import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch } from '@/lib/cadence';
+import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch, dmOpen, resolveChannel, IG_DM } from '@/lib/cadence';
+import { enablePush, pushState, type PushState } from '@/lib/push';
 import { placeCall, normalizePhone } from '@/lib/voice';
 import { openCalendly, CALENDLY_URL } from '@/lib/calendly';
 import { analyzeImport } from '@/lib/csv';
@@ -30,9 +31,11 @@ export default function RelayApp() {
   const [importOpen, setImportOpen] = useState(false);
   const [newLeadOpen, setNewLeadOpen] = useState(false);
   const [reportsRep, setReportsRep] = useState(''); // '' = everyone (admin)
+  // Shared from Instagram/TikTok (PWA share target) → open Add prefilled.
+  useEffect(() => { if (r.shareIntent) setNewLeadOpen(true); }, [r.shareIntent]);
   return (
     <div className="app">
-      <Rail r={r} />
+      <Rail r={r} onNewLead={() => setNewLeadOpen(true)} />
       <div className="main">
         <TopBar r={r} onImport={() => setImportOpen(true)} />
         <div className="content">
@@ -47,7 +50,7 @@ export default function RelayApp() {
         </div>
       </div>
       {importOpen && <ImportModal r={r} onClose={() => setImportOpen(false)} />}
-      {newLeadOpen && <NewLeadModal r={r} onClose={() => setNewLeadOpen(false)} />}
+      {newLeadOpen && <NewLeadModal r={r} prefill={r.shareIntent || undefined} onClose={() => { setNewLeadOpen(false); r.clearShareIntent(); }} />}
       <IncomingBanner r={r} />
       <FloatingDialer r={r} />
     </div>
@@ -73,10 +76,13 @@ function parseHandle(input: string): { user: string; handle: string; url: string
 // Create a lead by hand. An Instagram handle is verified (valid format), linked
 // (opens the live profile to confirm), and tags the lead source=instagram so the
 // avatar badge shows.
-function NewLeadModal({ r, onClose }: { r: R; onClose: () => void }) {
+function NewLeadModal({ r, onClose, prefill }: { r: R; onClose: () => void; prefill?: { platform: 'instagram' | 'tiktok' | null; handle: string; text: string; url: string } }) {
   const [salon, setSalon] = useState('');
   const [name, setName] = useState('');
-  const [ig, setIg] = useState('');
+  const [ig, setIg] = useState(prefill?.platform !== 'tiktok' && prefill?.handle ? '@' + prefill.handle : '');
+  const [notes, setNotes] = useState(prefill?.text && !/^https?:/i.test(prefill.text) ? prefill.text : '');
+  const [pulling, setPulling] = useState(false);
+  const [pullMsg, setPullMsg] = useState<string | null>(null);
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [website, setWebsite] = useState('');
@@ -88,8 +94,27 @@ function NewLeadModal({ r, onClose }: { r: R; onClose: () => void }) {
   const canSave = !!(salon.trim() || h.handle) && (!ig.trim() || h.valid);
   const save = async () => {
     setBusy(true);
-    await r.addLead({ salon: salon.trim() || h.handle, contactName: name, handle: h.user, phone, email, website, bookingSystem: booking, city, cadenceId: cadenceId || undefined });
+    await r.addLead({ salon: salon.trim() || h.handle, contactName: name, handle: h.user, phone, email, website, bookingSystem: booking, city, cadenceId: cadenceId || undefined, notes: notes.trim() || undefined });
     setBusy(false); onClose();
+  };
+  // Pull the public profile (name, site, bio) + phone/booking off the site.
+  const pull = async () => {
+    if (!h.valid) return;
+    setPulling(true); setPullMsg(null);
+    try {
+      const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h.user, salon: salon.trim() || undefined, city: city.trim() || undefined }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.found) { setPullMsg(j.error || 'Nothing found for that handle yet — fill it in by hand.'); return; }
+      const got: string[] = [];
+      if (j.name && !salon.trim()) { setSalon(j.name); got.push('name'); }
+      if (j.phone && !phone.trim()) { setPhone(j.phone); got.push('phone'); }
+      if (j.email && !email.trim()) { setEmail(j.email); got.push('email'); }
+      if (j.website && !website.trim()) { setWebsite(String(j.website).replace(/^https?:\/\//, '').replace(/\/$/, '')); got.push('website'); }
+      if (j.bookingSystem && !booking.trim()) { setBooking(j.bookingSystem); got.push('booking'); }
+      if (j.city && !city.trim()) { setCity(j.city); got.push('city'); }
+      setPullMsg(got.length ? `✓ Pulled ${got.join(', ')}` : 'Profile found — nothing new to add.');
+    } catch { setPullMsg('Lookup failed.'); }
+    finally { setPulling(false); }
   };
   const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: '8px 10px', fontSize: 13, background: 'var(--panel)', color: 'var(--ink)' };
   const field = (label: string, val: string, set: (v: string) => void, ph = '', type = 'text') => (
@@ -101,7 +126,7 @@ function NewLeadModal({ r, onClose }: { r: R; onClose: () => void }) {
   return (
     <div className="overlay on" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={{ maxWidth: 560 }}>
-        <div className="mh"><h3>New lead</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="mh"><h3>{prefill ? (prefill.platform === 'tiktok' ? 'Add to Relay · from TikTok' : 'Add to Relay · from Instagram') : 'New lead'}</h3><button className="x" onClick={onClose}>×</button></div>
         <div className="mb" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>Instagram</span>
@@ -109,6 +134,17 @@ function NewLeadModal({ r, onClose }: { r: R; onClose: () => void }) {
             {ig.trim() && (h.valid
               ? <span style={{ fontSize: 12, color: '#2f855a', display: 'inline-flex', alignItems: 'center', gap: 6 }}>✓ Linked <b>{h.handle}</b> — <a href={h.url} target="_blank" rel="noreferrer" style={{ color: '#2f855a', fontWeight: 600 }}>open to verify ↗</a></span>
               : <span style={{ fontSize: 12, color: '#c0503f' }}>Not a valid Instagram handle yet</span>)}
+            {h.valid && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                <button type="button" className="btn sm" disabled={pulling} onClick={pull} title="Business name, website, phone and booking system from the public profile + link in bio">{pulling ? 'Pulling…' : '✨ Pull from Instagram'}</button>
+                {pullMsg && <span style={{ fontSize: 12, color: pullMsg.startsWith('✓') ? '#2f855a' : 'var(--ink3)' }}>{pullMsg}</span>}
+              </div>
+            )}
+          </label>
+          {(prefill?.platform === 'tiktok' && prefill.handle) && <div style={{ fontSize: 12, color: 'var(--ink2)' }}>TikTok <b>@{prefill.handle}</b> — TikTok has no DM API, so Relay keeps the handle in the notes and works her by call/text.</div>}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>Their ask (comment / DM · optional)</span>
+            <textarea style={{ ...inputStyle, minHeight: 56, resize: 'vertical' }} value={notes} placeholder="Paste what she said — it lands on the timeline as her words" onChange={(e) => setNotes(e.target.value)} />
           </label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {field('Business / salon', salon, setSalon, h.handle ? `defaults to ${h.handle}` : 'Salon name')}
@@ -296,7 +332,7 @@ function ImportModal({ r, onClose }: { r: R; onClose: () => void }) {
   );
 }
 
-function Rail({ r }: { r: R }) {
+function Rail({ r, onNewLead }: { r: R; onNewLead: () => void }) {
   const btn = (v: R['view'], label: string, path: React.ReactNode, short?: string) => (
     <button className={r.view === v ? 'on' : ''} title={label} onClick={() => r.setView(v)}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{path}</svg>
@@ -315,12 +351,35 @@ function Rail({ r }: { r: R }) {
       {btn('leads', 'Pipeline', <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />, 'Leads')}
       {r.isAdmin && btn('staging', 'Staging', <path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />)}
       {btn('enrich', 'Enrich', <path d="M13 3l2.3 6.2L22 11.5l-6.7 2.3L13 20l-2.3-6.2L4 11.5l6.7-2.3zM5 3v3M3.5 4.5h3" />)}
+      <button className="rail-add" title="Add a lead" onClick={onNewLead}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+        <span className="rail-lbl">Add</span>
+      </button>
       {btn('cadences', 'Cadences', <path d="M3 12h4l3 8 4-16 3 8h4" />, 'Cadence')}
       {btn('reports', 'Reports', <path d="M3 3v18h18M8 15v3M13 9v9M18 5v13" />)}
       {r.isAdmin && btn('team', 'Team', <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.9M16 3.1a4 4 0 010 7.8" />)}
       <div className="spacer" />
       <div className="me" title={r.me?.name || 'You'}>{r.me ? initials(r.me.name) : 'SB'}</div>
     </nav>
+  );
+}
+
+function RemindersButton({ r }: { r: R }) {
+  const [state, setState] = useState<PushState>('unsupported');
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { pushState().then(setState); }, []);
+  if (!r.enabled || !r.me || state === 'unsupported' || state === 'unavailable' || state === 'on') return null;
+  const go = async () => {
+    const res = await enablePush(r.me!.id);
+    if (res.ok) setState('on'); else { setMsg(res.error || 'Could not turn on reminders.'); setTimeout(() => setMsg(null), 6000); }
+  };
+  return (
+    <>
+      {msg && <span className="demo-flag" style={{ background: 'var(--red-soft)', color: 'var(--red)' }}>{msg}</span>}
+      <button className="btn tb-push" onClick={go} title={state === 'blocked' ? 'Notifications are blocked for Relay in this browser' : 'Get a buzz on this phone 5 min before every callback'} disabled={state === 'blocked'}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" /></svg><span className="lbl">Reminders</span>
+      </button>
+    </>
   );
 }
 
@@ -348,6 +407,7 @@ function TopBar({ r, onImport }: { r: R; onImport: () => void }) {
           <option value="all">Everyone</option>
         </select>
       )}
+      <RemindersButton r={r} />
       <button className="btn tb-import" onClick={onImport}>{Icon.import}<span className="lbl">Import leads</span></button>
       <button className="btn flowbtn" onClick={() => r.startFlow()}>{Icon.flow}<span className="lbl">Flow Mode</span></button>
       {r.enabled && <button className="btn tb-signout" onClick={r.signOut} title="Sign out"><span className="lbl">Sign out</span></button>}
@@ -855,6 +915,15 @@ function TeamView({ r, onViewActivity }: { r: R; onViewActivity: (repId: string)
               <label className="team-num">Number
                 <input defaultValue={rp.phoneNumber || ''} placeholder="+1…" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (rp.phoneNumber || '')) r.updateRep(rp.id, { phoneNumber: v }); }} />
               </label>
+              <label className="team-num" title="The phone Relay rings for the cell bridge and for callbacks">Cell
+                <input defaultValue={rp.forwardTo || ''} placeholder="+1 your cell" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (rp.forwardTo || '')) r.updateRep(rp.id, { forwardTo: v }); }} />
+              </label>
+              <label className="team-num" title="Bridge = Call rings your cell first, then dials her. App = the in-browser dialer.">Call via
+                <select defaultValue={rp.callMode || 'bridge'} onChange={(e) => r.updateRep(rp.id, { callMode: e.target.value as 'bridge' | 'app' })}>
+                  <option value="bridge">My cell (bridge)</option>
+                  <option value="app">In-app dialer</option>
+                </select>
+              </label>
               <div className="team-leads"><b>{r.repLeadCounts[rp.id] || 0}</b><span>leads</span></div>
               <div className="team-actions">
                 <button className="btn sm" onClick={() => onViewActivity(rp.id)}>Activity →</button>
@@ -1103,7 +1172,7 @@ function Inbox({ r }: { r: R }) {
           {threadList.map((t, i) => (
             <div key={t.key} className={`thread ${t.unread ? 'unread' : ''} ${sel === t.key ? 'on' : ''}`} onClick={() => r.openThread(t.key)}>
               <div className="tav" style={{ background: colorFor(i) }}>{initials(t.name || '?')}
-                <span className="chn">{t.last.channel === 'email' ? Icon.email : Icon.text}</span></div>
+                <span className={`chn ${t.last.channel === 'dm' ? 'dm' : ''}`}>{t.last.channel === 'email' ? Icon.email : t.last.channel === 'dm' ? IgGlyph : Icon.text}</span></div>
               <div className="tbody">
                 <div className="trow"><span className="tnm">{t.name}</span><span className="ttime">{t.last.time}</span></div>
                 <div className="tsalon">{t.lead ? t.lead.salon : 'Not in your leads'}</div>
@@ -1119,7 +1188,7 @@ function Inbox({ r }: { r: R }) {
               <div className="conv-head">
                 <button className="inbox-back" onClick={r.closeThread} title="Back to inbox">‹</button>
                 <div className="cav" style={{ background: colorFor(threadList.findIndex((t) => t.key === sel)) }}>{initials(selT.name || '?')}</div>
-                <div><h3>{selT.name}{selT.lead ? ` · ${selT.lead.salon}` : ''}</h3><div className="cs">{selMsgs[selMsgs.length - 1]?.channel === 'email' ? 'Email' : 'Text'} · {fmtPhone(selT.number)}</div></div>
+                <div><h3>{selT.name}{selT.lead ? ` · ${selT.lead.salon}` : ''}</h3><div className="cs">{selMsgs[selMsgs.length - 1]?.channel === 'email' ? 'Email' : selMsgs[selMsgs.length - 1]?.channel === 'dm' ? `Instagram DM${selT.lead && !dmOpen(selT.lead) ? ' · window closed, replies go by text' : ''}` : 'Text'} · {selT.lead?.handle ? `${selT.lead.handle} · ` : ''}{fmtPhone(selT.number)}</div></div>
                 <div className="ca">
                   {selT.lead
                     ? <button className="btn sm" onClick={() => { r.setActiveLeadId(selT.lead!.id); r.setView('dialer'); }}>Open in dialer</button>
@@ -1497,6 +1566,9 @@ function Dialer({ r }: { r: R }) {
             <div className="r"><BookDemo lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
+          <ChannelRow r={r} lead={lead} />
+          <LeadContextCards r={r} lead={lead} />
+
           {inFlow ? (
             // The action bar always belongs to the flow's CURRENT lead. If the rep
             // has browsed to a different lead in the queue, show a peek banner
@@ -1817,6 +1889,7 @@ function FlowBar({ r, lead }: { r: R; lead: Lead }) {
       <span className="fb-what">Live with {lead.contact?.name === '—' ? lead.salon : lead.contact?.name?.split(' ')[0]} — hit “End &amp; log” to pick the outcome →</span></div>;
   }
   if (phase === 'note') return <NoteBar r={r} />;
+  if (phase === 'callback') return <CallbackPicker key={lead.id} lead={lead} onSet={(iso, note) => r.confirmFlowCallback(iso, note)} onCancel={r.cancelFlowCallback} flow />;
   if (phase === 'dispo') {
     return (
       <div className="flowbar dispo"><span className="fb-badge live">On the call</span><span className="fb-what">How&apos;d it go?</span>
@@ -1854,22 +1927,172 @@ function FlowBar({ r, lead }: { r: R; lead: Lead }) {
   }
   // key by lead id so the draft always re-derives for the lead it's addressed to
   // (a stale body must never survive a lead change).
-  if (ch === 'text') return <ComposeText key={lead.id} r={r} lead={lead} />;
+  const eff = ch ? resolveChannel(ch, lead) : ch;
+  if (eff === 'dm') return <ComposeDm key={lead.id} r={r} lead={lead} />;
+  if (eff === 'text') return <ComposeText key={lead.id} r={r} lead={lead} fallbackFromDm={ch === 'dm'} />;
   return <ComposeEmail key={lead.id} r={r} lead={lead} />;
 }
 
-function ComposeText({ r, lead }: { r: R; lead: Lead }) {
+function ComposeText({ r, lead, fallbackFromDm }: { r: R; lead: Lead; fallbackFromDm?: boolean }) {
   const cad = r.cadenceById(lead.cadenceId);
-  const tpl = cad?.steps.find((s) => s.channel === 'text' && s.template)?.template || DEFAULT_SMS;
+  const tpl = cad?.steps.find((s) => (s.channel === 'text' || (fallbackFromDm && s.channel === 'dm')) && s.template)?.template || DEFAULT_SMS;
   const [body, setBody] = useState(renderTemplate(tpl, lead));
   return (
     <div className="flowbar text compose">
       <div className="compose-head"><span className="fb-badge">{Icon.text} Text · Action {r.flow.actionCount + 1}</span>
-        <span className="compose-meta">To {lead.contact?.name === '—' ? lead.contact?.role : lead.contact?.name} · {lead.phone} · review before sending</span></div>
+        <span className="compose-meta">To {lead.contact?.name === '—' ? lead.contact?.role : lead.contact?.name} · {lead.phone} · review before sending{fallbackFromDm ? ' · DM window closed, sending as a text' : ''}</span></div>
       <textarea value={body} onChange={(e) => setBody(e.target.value)} />
       <div className="fb-actions"><button className="btn sm" onClick={r.flowSkip}>Skip</button>
         <button className="btn primary sm" style={{ background: 'var(--purple)', borderColor: 'var(--purple)' }} onClick={() => r.flowSend('text', body)}>Send text</button></div>
     </div>
+  );
+}
+
+function ComposeDm({ r, lead }: { r: R; lead: Lead }) {
+  const cad = r.cadenceById(lead.cadenceId);
+  const tpl = cad?.steps.find((s) => s.channel === 'dm' && s.template)?.template || IG_DM;
+  const [body, setBody] = useState(renderTemplate(tpl, lead));
+  const left = lead.lastSocialAt ? Math.max(0, 24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime())) : 0;
+  const hrs = Math.floor(left / 3600_000);
+  return (
+    <div className="flowbar text compose dm">
+      <div className="compose-head"><span className="fb-badge" style={{ background: 'linear-gradient(105deg,#F58529,#DD2A7B 55%,#8134AF)' }}>{IgGlyph} DM · Action {r.flow.actionCount + 1}</span>
+        <span className="compose-meta">To {lead.handle || 'her Instagram'} · window open {hrs} h more · review before sending</span></div>
+      <textarea value={body} onChange={(e) => setBody(e.target.value)} />
+      <div className="fb-actions"><button className="btn sm" onClick={r.flowSkip}>Skip</button>
+        <button className="btn primary sm" style={{ background: '#c2366b', borderColor: '#c2366b' }} onClick={() => r.flowSend('dm', body)}>Send DM</button></div>
+    </div>
+  );
+}
+
+const IgGlyph = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 14, height: 14 }}><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1" fill="currentColor" /></svg>;
+
+// Pick the callback time she asked for. Quick chips cover the usual answers;
+// the datetime field handles "Thursday after 2". Sets a real reminder.
+function CallbackPicker({ lead, onSet, onCancel, flow, initialNote }: { lead: Lead; onSet: (iso: string, note?: string) => void; onCancel: () => void; flow?: boolean; initialNote?: string }) {
+  const [custom, setCustom] = useState('');
+  const [note, setNote] = useState(initialNote || '');
+  const at = (d: Date) => { d.setSeconds(0, 0); return d; };
+  const inHours = (h: number) => at(new Date(Date.now() + h * 3600_000));
+  const dayAt = (addDays: number, hour: number) => { const d = new Date(); d.setDate(d.getDate() + addDays); d.setHours(hour, 0, 0, 0); return d; };
+  const fmt = (d: Date) => d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const chips: { label: string; d: Date }[] = [
+    { label: 'In 1 hour', d: inHours(1) }, { label: 'In 2 hours', d: inHours(2) },
+    ...(new Date().getHours() < 13 ? [{ label: 'Today 2:00 PM', d: dayAt(0, 14) }] : []),
+    { label: 'Tomorrow 10 AM', d: dayAt(1, 10) }, { label: 'Tomorrow 2 PM', d: dayAt(1, 14) },
+  ];
+  const localInput = (d: Date) => { const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+  return (
+    <div className={`flowbar callback ${flow ? '' : 'card-mode'}`}>
+      <div className="compose-head"><span className="fb-badge good">Callback · set a reminder</span>
+        <span className="fb-sub">{lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name : lead.salon} asked you to call back — Relay buzzes your phone 5 min before</span></div>
+      <div className="cb-chips">
+        {chips.map((c) => <button key={c.label} className="btn sm" onClick={() => onSet(c.d.toISOString(), note.trim() || undefined)} title={fmt(c.d)}>{c.label}</button>)}
+      </div>
+      <div className="cb-custom">
+        <input type="datetime-local" value={custom} min={localInput(new Date())} onChange={(e) => setCustom(e.target.value)} />
+        <input type="text" value={note} placeholder="Note — e.g. after the renters meeting" onChange={(e) => setNote(e.target.value)} />
+        <button className="btn primary sm" disabled={!custom} onClick={() => { const d = new Date(custom); if (!isNaN(d.getTime())) onSet(d.toISOString(), note.trim() || undefined); }}>Set reminder</button>
+        <button className="btn sm" onClick={onCancel}>{flow ? 'Back' : 'Cancel'}</button>
+      </div>
+    </div>
+  );
+}
+
+// The four ways to reach her, always in the same place. Relay greys out what
+// can't work (no phone, no Instagram conversation / window closed, no email).
+function ChannelRow({ r, lead }: { r: R; lead: Lead }) {
+  const [dm, setDm] = useState(false);
+  const [dmBody, setDmBody] = useState('');
+  const [dmMsg, setDmMsg] = useState<string | null>(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [text, setText] = useState(false);
+  const [textBody, setTextBody] = useState('');
+  const canDm = dmOpen(lead);
+  const leftH = lead.lastSocialAt ? Math.max(0, Math.floor((24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime())) / 3600_000)) : 0;
+  const bridge = r.useBridge;
+  return (
+    <div className="chrow-wrap">
+      <div className="chrow">
+        <button className="chb pri" disabled={!lead.phone} onClick={() => r.startCall(lead.id)} title={bridge ? 'Relay rings your cell, then dials her from the Relay number' : 'Call from the in-app dialer'}>
+          {Icon.call}<span>Call</span><small>{lead.phone ? (bridge ? 'rings my cell' : 'in-app') : 'no phone'}</small>
+        </button>
+        <button className={`chb ig ${canDm ? '' : 'off'}`} onClick={() => { if (canDm) { setDm((v) => !v); setDmMsg(null); } }} title={canDm ? 'Instagram DM' : lead.igUserId ? 'Her 24-hour DM window is closed — text her' : 'No Instagram conversation yet'}>
+          {IgGlyph}<span>DM</span><small>{canDm ? `${leftH} h left` : lead.igUserId ? 'window closed' : lead.handle ? 'no DM yet' : '—'}</small>
+        </button>
+        <button className={`chb ${lead.phone ? '' : 'off'}`} onClick={() => lead.phone && setText((v) => !v)} title="Text from the Relay number">
+          {Icon.text}<span>Text</span><small>{lead.phone ? 'Relay number' : 'no phone'}</small>
+        </button>
+        <button className={`chb ${lead.email ? '' : 'off'}`} onClick={() => lead.email && setEmailOpen(true)} title="Email from your own mail app">
+          {Icon.email}<span>Email</span><small>{lead.email ? 'from your mail' : 'no email'}</small>
+        </button>
+      </div>
+      {dm && (
+        <div className="chrow-compose dm">
+          <textarea value={dmBody} placeholder={`DM ${lead.handle || 'her'}…`} onChange={(e) => setDmBody(e.target.value)} />
+          <div className="fb-actions">
+            {dmMsg && <span className="fb-sub" style={{ color: dmMsg.startsWith('✓') ? '#2f855a' : 'var(--red)' }}>{dmMsg}</span>}
+            <button className="btn sm" onClick={() => setDm(false)}>Close</button>
+            <button className="btn primary sm" style={{ background: '#c2366b', borderColor: '#c2366b' }} disabled={!dmBody.trim()} onClick={async () => { const res = await r.sendLeadDm(lead.id, dmBody.trim()); setDmMsg(res.ok ? '✓ Sent' : res.error || 'Failed'); if (res.ok) setDmBody(''); }}>Send DM</button>
+          </div>
+        </div>
+      )}
+      {text && (
+        <div className="chrow-compose">
+          <textarea value={textBody} placeholder={`Text ${lead.phone}…`} onChange={(e) => setTextBody(e.target.value)} />
+          <div className="fb-actions"><button className="btn sm" onClick={() => setText(false)}>Close</button>
+            <button className="btn primary sm" style={{ background: 'var(--purple)', borderColor: 'var(--purple)' }} disabled={!textBody.trim()} onClick={() => { r.sendReply(lead.id, textBody.trim(), 'text'); setTextBody(''); setText(false); }}>Send text</button></div>
+        </div>
+      )}
+      {emailOpen && <EmailComposer r={r} lead={lead} onClose={() => setEmailOpen(false)} />}
+    </div>
+  );
+}
+
+// Why she's here (her Instagram words + DM window) and the callback reminder.
+function LeadContextCards({ r, lead }: { r: R; lead: Lead }) {
+  const [pick, setPick] = useState(false);
+  const social = lead.source === 'instagram' && (lead.notes || lead.lastSocialAt);
+  const leftMs = lead.lastSocialAt ? 24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime()) : 0;
+  const cb = lead.callbackAt ? new Date(lead.callbackAt) : null;
+  const cbLate = cb ? cb.getTime() < Date.now() : false;
+  const primed = r.pendingCallLead === lead.id;
+  return (
+    <>
+      {primed && (
+        <div className="ctx-card callback">
+          <div className="ctx-h"><b>Reminder · call {lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name.split(' ')[0] : lead.salon} now</b><span className="grow" />
+            <button className="btn primary sm" disabled={!lead.phone} onClick={() => { r.clearPendingCall(); r.startCall(lead.id); }}>{Icon.call} Call</button>
+            <button className="btn sm" onClick={r.clearPendingCall}>Later</button></div>
+          {lead.callbackNote && <div className="ctx-sub">{lead.callbackNote}</div>}
+        </div>
+      )}
+      {social && (
+        <div className="ctx-card social">
+          <div className="ctx-h"><span className="soc-ig">{IgGlyph}</span><b>Why she&apos;s here</b>{lead.handle && <a href={`https://instagram.com/${lead.handle.replace(/^@/, '')}`} target="_blank" rel="noreferrer" className="ctx-link">{lead.handle}</a>}</div>
+          {lead.notes && <div className="ctx-quote">{lead.notes}</div>}
+          {lead.lastSocialAt && (
+            <div className="ctx-win"><span>DM window</span><div className="bar"><i style={{ width: `${Math.max(0, Math.min(100, (leftMs / (24 * 3600_000)) * 100))}%` }} /></div><b>{leftMs > 0 ? `${Math.floor(leftMs / 3600_000)} h left` : 'closed'}</b></div>
+          )}
+        </div>
+      )}
+      {cb && !pick && (
+        <div className={`ctx-card callback ${cbLate ? 'late' : ''}`}>
+          <div className="ctx-h"><b>Callback · {cb.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</b>
+            <span className="ctx-tag">{cbLate ? 'overdue' : 'reminder set'}</span>
+            <span className="grow" />
+            <button className="btn sm" onClick={() => setPick(true)}>Change</button>
+            <button className="btn sm" onClick={() => r.setCallback(lead.id, null)}>Done</button>
+          </div>
+          {lead.callbackNote && <div className="ctx-sub">{lead.callbackNote}</div>}
+          <div className="ctx-sub">Your phone buzzes 5 min before · she has {r.me?.phoneNumber || 'the Relay number'} and it rings you.</div>
+        </div>
+      )}
+      {!cb && !pick && lead.stage !== 'won' && (
+        <button className="ctx-set-cb" onClick={() => setPick(true)}>+ Set a callback reminder</button>
+      )}
+      {pick && <CallbackPicker lead={lead} initialNote={lead.callbackNote} onSet={(iso, note) => { r.setCallback(lead.id, iso, note); setPick(false); }} onCancel={() => setPick(false)} />}
+    </>
   );
 }
 
@@ -1916,6 +2139,7 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
   const [status, setStatus] = useState(direction === 'in' ? 'Connected (inbound)' : 'Connecting…');
   const [mode, setMode] = useState<'connecting' | 'real' | 'sim'>('connecting');
   const callRef = useRef<any>(null);
+  const placedRef = useRef(false); // StrictMode double-mount guard: one bridge per panel
   const them = lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name.split(' ')[0] : 'Them';
 
   useEffect(() => {
@@ -1955,6 +2179,18 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
         } else { runSim(inScript); }
         return;
       }
+      if (r.useBridge) {
+        // Cell bridge: Relay rings the rep's phone, then dials her. Audio lives
+        // on the cell, so this panel is just status + notes + End & log.
+        if (placedRef.current) return;
+        placedRef.current = true;
+        setMode('real'); setStatus('Ringing your cell…');
+        const res = await r.bridgeCall(lead.id);
+        if (cancelled) return;
+        if (res.ok) { setStatus('Pick up your phone — Relay is dialing her'); startTick(); }
+        else { setStatus(res.code === 'no_cell' ? 'Add your cell in Team first' : `Call failed: ${res.error}`); }
+        return;
+      }
       const call = await placeCall(lead.phone || '', lead.id, r.me?.id);
       if (cancelled) { call?.disconnect?.(); return; }
       if (call) {
@@ -1978,7 +2214,10 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
   return (
     <div className="callcol" style={{ display: 'flex' }}>
       <div className="ch"><span className="live"><span className="p" /><span>{status}</span></span><span className="tm">{mm}:{ss}</span></div>
-      <div className="who">{direction === 'in' ? 'incoming' : mode === 'real' ? 'live' : 'mobile'} · {lead.phone} · {lead.contact?.name === '—' ? lead.salon : lead.contact?.name}</div>
+      <div className="who">{direction === 'in' ? 'incoming' : r.useBridge ? 'cell bridge' : mode === 'real' ? 'live' : 'mobile'} · {lead.phone} · {lead.contact?.name === '—' ? lead.salon : lead.contact?.name}</div>
+      {direction === 'out' && r.useBridge && (
+        <div className="bridge-note">Talk on your phone. Give her <b>{r.me?.phoneNumber || 'the Relay number'}</b> — when she calls it back it rings <b>you</b>. Tap <b>End &amp; log</b> here when you hang up.</div>
+      )}
       <div className="transcript">
         {mode === 'real' && (
           <div className="tr them"><div className="sp">Relay</div><div className="msg">Live call in progress. Real-time transcription arrives in a later phase — jot key points below and log the outcome when you hang up.</div></div>
@@ -1999,6 +2238,7 @@ const CH_META: Record<Channel, { label: string; icon: React.ReactNode; color: st
   call: { label: 'Call', icon: Icon.call, color: 'var(--accent)' },
   text: { label: 'Text', icon: Icon.text, color: 'var(--purple, #6d5aa8)' },
   email: { label: 'Email', icon: Icon.email, color: 'var(--blue, #3a6ea5)' },
+  dm: { label: 'Instagram DM', icon: IgGlyph, color: '#c2366b' },
   wait: { label: 'Wait', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>, color: '#8a97ab' },
 };
 
@@ -2158,7 +2398,7 @@ function CadenceBuilder({ r }: { r: R }) {
                       <label className="cad-chan">
                         <span className="cad-chan-ic" style={{ color: CH_META[s.channel].color }}>{CH_META[s.channel].icon}</span>
                         <select value={s.channel} onChange={(e) => updStep(i, { channel: e.target.value as Channel })}>
-                          {(['call', 'text', 'email', 'wait'] as Channel[]).map((ch) => <option key={ch} value={ch}>{CH_META[ch].label}</option>)}
+                          {(['call', 'text', 'dm', 'email', 'wait'] as Channel[]).map((ch) => <option key={ch} value={ch}>{CH_META[ch].label}</option>)}
                         </select>
                       </label>
                       <label className="cad-gap">Day gap
@@ -2175,9 +2415,9 @@ function CadenceBuilder({ r }: { r: R }) {
                     {s.channel === 'email' && (
                       <input className="cad-subj" value={s.subject || ''} onChange={(e) => updStep(i, { subject: e.target.value })} placeholder="Email subject — use {salon}, {first_name}" />
                     )}
-                    {(s.channel === 'text' || s.channel === 'email') && (
+                    {(s.channel === 'text' || s.channel === 'email' || s.channel === 'dm') && (
                       <textarea className="cad-tpl" value={s.template || ''} onChange={(e) => updStep(i, { template: e.target.value })}
-                        placeholder={s.channel === 'text' ? 'Text message — use {salon}, {first_name}' : 'Email body — use {salon}, {first_name}'} />
+                        placeholder={s.channel === 'text' ? 'Text message — use {salon}, {first_name}' : s.channel === 'dm' ? 'Instagram DM — sends as a text when her 24h window is closed. Use {salon}, {first_name}, {demo_link}' : 'Email body — use {salon}, {first_name}'} />
                     )}
                     {s.channel === 'call' && (
                       <BranchEditor step={s} open={!!openBranches[i]} onToggle={() => setOpenBranches((o) => ({ ...o, [i]: !o[i] }))} onSet={(k, a) => setBranch(i, k, a)} />

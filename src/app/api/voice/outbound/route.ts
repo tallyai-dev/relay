@@ -1,5 +1,6 @@
 import twilio from 'twilio';
 import { supabaseAdmin } from '@/lib/supabase';
+import { stampLastRep } from '@/lib/voice-server';
 
 // POST /api/voice/outbound  — TwiML App Voice URL.
 // When the browser SDK places a call it hits this; we return TwiML that dials
@@ -33,6 +34,8 @@ export async function POST(req: Request) {
     }
   }
   const disclosure = (process.env.RECORDING_DISCLOSURE || '').trim();
+  // Her callback should ring whoever dialed her — remember it.
+  if (leadId && repId) await stampLastRep(leadId, repId);
 
   const twiml = new twilio.twiml.VoiceResponse();
   if (to && callerId) {

@@ -2,7 +2,7 @@
   "name": "relay",
   "version": "0.1.0",
   "private": true,
-  "description": "Relay — outbound call/text/email dialer + CRM for prospecting salons",
+  "description": "Relay \u2014 outbound call/text/email dialer + CRM for prospecting salons",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -16,12 +16,14 @@
     "next": "^14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "twilio": "^5.3.4"
+    "twilio": "^5.3.4",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@types/web-push": "^3.6.4",
     "typescript": "^5.5.4"
   }
 }

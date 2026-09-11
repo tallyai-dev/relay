@@ -96,9 +96,24 @@ export const DEFAULT_EMAIL_BODY =
 export const INSTAGRAM_CADENCE_ID = '22222222-2222-2222-2222-222222222222';
 export const IG_SMS =
   'Hi{first_name}! It\'s Seth from Tally — thanks for the DM about {salon}. Here\'s that 2-min demo I mentioned: {demo_link}. Want me to give you a quick call today?';
+export const IG_DM =
+  'Hi{first_name}! Thanks for reaching out about {salon}. Here\'s the 2-min demo: {demo_link} — want me to text it to you, or is a quick call easier? What\'s the best number?';
 export const IG_EMAIL_SUBJECT = '{salon}: the AI receptionist demo you asked about';
 export const IG_EMAIL_BODY =
   'Hi{first_name} — you messaged us on Instagram about a demo for {salon}. Here\'s the 60-second version: {demo_link}. It answers every call you miss and books straight into your calendar. Worth a look?';
+
+// A DM step only works when we have her Instagram id AND we're inside Meta's
+// 24-hour reply window; otherwise the same step runs as a text (or is skipped
+// when there's no phone either). Pure, so Flow and the server agree.
+export const DM_WINDOW_MS = 24 * 60 * 60 * 1000;
+export function dmOpen(lead: Lead): boolean {
+  return !!lead.igUserId && !!lead.lastSocialAt && Date.now() - new Date(lead.lastSocialAt).getTime() < DM_WINDOW_MS;
+}
+export function resolveChannel(ch: Channel, lead: Lead): Channel {
+  if (ch !== 'dm') return ch;
+  if (dmOpen(lead)) return 'dm';
+  return lead.phone ? 'text' : (lead.email ? 'email' : 'dm');
+}
 
 // ── Disposition branching ────────────────────────────────────────────────────
 // The six outcomes a call can end in. `no_answer/voicemail/wrong_number` are the
