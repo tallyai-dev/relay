@@ -15,7 +15,12 @@
 // Everything degrades: no token → webhook still logs events and makes leads,
 // it just can't reply or pull profiles.
 
-const GRAPH = 'https://graph.facebook.com/v21.0';
+// Two flavours of the Instagram API exist. "Instagram API with Facebook login"
+// talks to graph.facebook.com with a Page token; "Instagram API with Instagram
+// login" (what the Tally Relay App is set up with, 9/10) talks to
+// graph.instagram.com with an Instagram User token. Same paths either way, so
+// the base is env-selectable: META_GRAPH_BASE=https://graph.instagram.com/v21.0
+const GRAPH = process.env.META_GRAPH_BASE || 'https://graph.facebook.com/v21.0';
 
 export const DM_WINDOW_MS = 24 * 60 * 60 * 1000;
 
