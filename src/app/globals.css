@@ -1349,3 +1349,7 @@ tr.row-sel td{background:var(--accent-soft,#e6efff)}
 .cand-mt{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cand-pop{position:absolute;right:0;top:calc(100% + 6px);width:340px;max-width:calc(100vw - 32px);background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px;box-shadow:0 12px 32px rgba(20,30,46,.16);z-index:30}
 .mchip.pick{background:#fff8e6;color:#8a5a00;border-color:#f3dfa2}
+@media (max-width:760px){
+  .cand-pop{position:fixed;left:12px;right:12px;top:auto;bottom:calc(env(safe-area-inset-bottom,0px) + 84px);width:auto;max-width:none;max-height:60vh;overflow:auto;padding:12px;box-shadow:0 -8px 30px rgba(20,30,46,.22)}
+  .cand-pop .cand-mt{white-space:normal}
+}
