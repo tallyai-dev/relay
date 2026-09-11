@@ -51,6 +51,41 @@ export interface Lead {
   callbackNote?: string;
   igUserId?: string;     // Instagram-scoped id (we can DM her)
   lastSocialAt?: string; // ISO — her last DM/comment → 24h DM window
+  owner?: 'rep' | 'agent';   // who works her: a human, or Eryn (the AI cold caller)
+  lineType?: string;         // Twilio Lookup: landline | mobile | voip | unknown
+  dnc?: boolean;             // "stop / remove me" — no dialer, no texts
+  agentAttempts?: number;    // how many times Eryn has dialed
+  agentNextAt?: string;      // ISO — Eryn won't retry before this
+}
+
+// One Eryn (ElevenLabs) call, from the agent_calls table.
+export type AgentOutcome =
+  | 'answered_interested' | 'callback' | 'gatekeeper' | 'not_interested'
+  | 'wrong_icp' | 'dnc' | 'voicemail' | 'no_answer' | 'unknown';
+export interface AgentCall {
+  id: string;
+  leadId: string;
+  kind: 'cold' | 'warm';
+  conversationId?: string;
+  status: 'queued' | 'ringing' | 'in_progress' | 'ended' | 'failed';
+  outcome?: AgentOutcome;
+  summary?: string;
+  transcript?: { role: 'agent' | 'user'; message: string; t?: number }[];
+  data?: Record<string, string>;
+  durationS?: number;
+  error?: string;
+  startedAt: string;
+  endedAt?: string;
+}
+export interface AgentShift {
+  id: string;
+  status: 'running' | 'paused' | 'done';
+  cap: number;
+  dials: number;
+  answered: number;
+  pausedNote?: string;
+  startedAt: string;
+  endedAt?: string;
 }
 
 // Disposition-based branching: after a Call step, what each outcome does next.

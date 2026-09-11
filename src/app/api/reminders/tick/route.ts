@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase';
 import { pushToRep, pushConfigured } from '@/lib/push-server';
+import { runShiftTick } from '@/lib/agent-server';
 
 // POST /api/reminders/tick   (header x-relay-cron: CRON_SECRET)
 // Runs every minute from netlify/functions/reminders-tick.mjs. Finds callbacks
@@ -18,7 +19,12 @@ export async function POST(req: Request) {
   }
   const db = supabaseAdmin();
   if (!db) return Response.json({ error: 'Not configured.' }, { status: 503 });
-  if (!pushConfigured()) return Response.json({ ok: true, sent: 0, note: 'push not configured' });
+
+  // Eryn's shift: one dial per tick at most, only while a shift is running.
+  let agent: any = null;
+  try { agent = await runShiftTick(); } catch (e: any) { agent = { error: e?.message }; console.error('agent tick', e?.message); }
+
+  if (!pushConfigured()) return Response.json({ ok: true, sent: 0, note: 'push not configured', agent });
 
   const now = Date.now();
   const hi = new Date(now + LEAD_MIN * 60_000).toISOString();
@@ -54,5 +60,5 @@ export async function POST(req: Request) {
       });
     }
   }
-  return Response.json({ ok: true, due: (due || []).length, sent });
+  return Response.json({ ok: true, due: (due || []).length, sent, agent });
 }

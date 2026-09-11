@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AgentView, AgentCallButton, ErynMark } from '@/components/AgentView';
 import { useRelay, isOverdue, type EnrichResult, EnrichCandidate } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch, dmOpen, resolveChannel, IG_DM } from '@/lib/cadence';
@@ -46,6 +47,7 @@ export default function RelayApp() {
           {r.view === 'dialer' && <Dialer r={r} />}
           {r.view === 'inbox' && <Inbox r={r} />}
           {r.view === 'cadences' && <CadenceBuilder r={r} />}
+          {r.view === 'agent' && <AgentView r={r} />}
           {r.view === 'team' && <TeamView r={r} onViewActivity={(id) => { setReportsRep(id); r.setView('reports'); }} />}
           {r.view === 'reports' && <ReportsView r={r} repFilter={reportsRep} setRepFilter={setReportsRep} />}
         </div>
@@ -414,6 +416,10 @@ function Rail({ r, onNewLead }: { r: R; onNewLead: () => void }) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
         <span className="rail-lbl">Add</span>
       </button>
+      <button className={r.view === 'agent' ? 'on' : ''} title="Eryn — AI cold caller" onClick={() => r.setView('agent')}>
+        <ErynMark size={22} />
+        <span className="rail-lbl">Eryn</span>
+      </button>
       {btn('cadences', 'Cadences', <path d="M3 12h4l3 8 4-16 3 8h4" />, 'Cadence')}
       {btn('reports', 'Reports', <path d="M3 3v18h18M8 15v3M13 9v9M18 5v13" />)}
       {r.isAdmin && btn('team', 'Team', <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.9M16 3.1a4 4 0 010 7.8" />)}
@@ -446,7 +452,7 @@ function TopBar({ r, onImport }: { r: R; onImport: () => void }) {
   const s = r.stats;
   return (
     <div className="topbar">
-      <div><div className="title">{r.view === 'dialer' ? 'Dialer session' : r.view[0].toUpperCase() + r.view.slice(1)}</div></div>
+      <div><div className="title">{r.view === 'dialer' ? 'Dialer session' : r.view === 'agent' ? 'Eryn · AI cold calls' : r.view[0].toUpperCase() + r.view.slice(1)}</div></div>
       <div className="metrics">
         <span className="metrics-day" title="Counts reset at midnight">Today</span>
         <div className="metric"><span>Dials</span><b>{s.dials}</b></div>
@@ -601,8 +607,10 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
               <button className="btn sm primary" disabled={!bulkOwner} onClick={doBulkOwner}>Set owner</button>
             </>
           )}
+          <button className="btn sm eryn-sm" title="Eryn (AI) works these on her next shift — cold lists only" onClick={() => { r.setAgentOwnerMany([...selected].filter((id) => r.leadById(id)?.source !== 'instagram'), 'agent'); clearSel(); }}><ErynMark size={14} /> Give to Eryn</button>
+          <button className="btn sm" onClick={() => { r.setAgentOwnerMany([...selected], 'rep'); clearSel(); }}>Take back</button>
           <button className="btn sm" onClick={clearSel}>Clear selection</button>
-          <span className="bulk-hint">Assigning a cadence starts them fresh at day 0, due now.</span>
+          <span className="bulk-hint">Assigning a cadence starts them fresh at day 0, due now. Instagram leads never go to Eryn.</span>
         </div>
       )}
 
@@ -617,7 +625,7 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
               <tr key={l.id} className={selected.has(l.id) ? 'row-sel' : ''} onClick={() => { r.setActiveLeadId(l.id); r.setView('dialer'); }} style={{ cursor: 'pointer' }}>
                 <td className="ck" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} /></td>
                 <td><div className="salon-cell"><div className="avatar" style={{ background: colorFor(i), position: 'relative', overflow: 'visible' }}>{initials(l.salon)}{l.source === 'instagram' && <IgBadge />}</div>
-                  <div><div className="nm">{l.salon}{l.cadenceCompletedAt && <span className="row-done" title={`Completed ${l.cadenceCompletedName || 'cadence'} · ${fmtDate(l.cadenceCompletedAt)}`}>✓ Done</span>}{r.isAdmin && l.ownerRepId && <span className="row-owner" title="Assigned rep">{repName(l.ownerRepId)}</span>}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
+                  <div><div className="nm">{l.salon}{l.cadenceCompletedAt && <span className="row-done" title={`Completed ${l.cadenceCompletedName || 'cadence'} · ${fmtDate(l.cadenceCompletedAt)}`}>✓ Done</span>}{r.isAdmin && l.ownerRepId && <span className="row-owner" title="Assigned rep">{repName(l.ownerRepId)}</span>}{l.owner === 'agent' && <span className="row-owner eryn-chip" title="On Eryn's list">Eryn</span>}{l.dnc && <span className="row-owner dnc-chip" title="Asked us to stop">DNC</span>}</div><div className="loc">{l.city}{l.bookingSystem && <span className="row-book">{l.bookingSystem}</span>}</div></div></div></td>
                 <td>{l.contact?.name === '—' ? <span className="muted">No name yet</span> : <div><div style={{ fontWeight: 600 }}>{l.contact?.name}</div><div className="loc">{l.contact?.role}</div></div>}</td>
                 <td>{dueBadge(l) ? <span className="mode sched">{dueBadge(l)}</span> : <span className="mode">{Icon.call} Call — {l.objection}</span>}</td>
                 <td className="muted">{l.lastTouch}</td>
@@ -1754,7 +1762,7 @@ function Dialer({ r }: { r: R }) {
                 <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
               )}
             </div>
-            <div className="r"><BookDemo lead={lead} /><TemplatesButton r={r} lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
+            <div className="r"><BookDemo lead={lead} /><AgentCallButton r={r} lead={lead} /><TemplatesButton r={r} lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
           </div>
 
           <ChannelRow r={r} lead={lead} />
@@ -1879,7 +1887,8 @@ function TimelineItem({ h }: { h: Activity }) {
             {h.transcript && <button className="rec-tx-toggle" onClick={() => setShowTx((v) => !v)}>{showTx ? 'Hide transcript' : 'Show transcript'}</button>}
           </div>
         )}
-        {sid && showTx && h.transcript && <div className="rec-transcript">{h.transcript}</div>}
+        {!sid && h.transcript && <button className="rec-tx-toggle" style={{ marginTop: 6 }} onClick={() => setShowTx((v) => !v)}>{showTx ? 'Hide transcript' : 'Show transcript'}</button>}
+        {showTx && h.transcript && <div className="rec-transcript">{h.transcript}</div>}
       </div>
     </div>
   );

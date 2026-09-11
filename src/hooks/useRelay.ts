@@ -3,11 +3,14 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL, INSTAGRAM_CADENCE_ID, IG_SMS, IG_DM, IG_EMAIL_BODY, IG_EMAIL_SUBJECT, resolveChannel, dmOpen } from '@/lib/cadence';
-import { authHeaders, setLeadCallback, repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, createLead, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
+import { authHeaders, setLeadCallback, repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, createLead, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, setAgentOwnerMany as setAgentOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
 import { mapToImportRows } from '@/lib/csv';
 
-export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile' | 'team';
+export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile' | 'team' | 'agent';
+
+// Eryn's screen: what /api/agent-shift returns.
+export interface AgentStatus { shift: any | null; live: any | null; today: { dials: number; answered: number; voicemail: number; noAnswer: number; interested: number }; queue: number; recent: any[] }
 export interface EnrichCandidate { placeId: string; name: string; phone?: string; website?: string; address?: string; city?: string; score: number }
 export interface EnrichResult { found: boolean; sure?: boolean; placeId?: string; candidates?: EnrichCandidate[]; websiteSource?: 'places' | 'instagram' | 'guess' | 'search'; name?: string; phone?: string; email?: string; website?: string; bookingSystem?: string; city?: string; address?: string; hours?: string[]; error?: string }
 
@@ -953,6 +956,75 @@ export function useRelay() {
   }, [enabled]);
 
   // Assign many leads to a rep (or null to unassign), optimistic.
+  // ── Eryn (AI cold caller) ────────────────────────────────────────────────────
+  const setAgentOwnerMany = useCallback((ids: string[], owner: 'rep' | 'agent') => {
+    if (!ids.length) return;
+    const idSet = new Set(ids);
+    setLeads((prev) => prev.map((l) => (idSet.has(l.id) ? { ...l, owner } : l)));
+    if (enabled) setAgentOwnerManyRepo(ids, owner);
+  }, [enabled]);
+
+  const DEMO_AGENT: AgentStatus = {
+    shift: { id: 'demo', status: 'running', cap: 60, dials: 12, answered: 3, started_at: new Date(Date.now() - 50 * 60000).toISOString() },
+    live: { id: 'demo-live', status: 'in_progress', started_at: new Date(Date.now() - 70000).toISOString(), leads: { salon: 'Lush & Co', city: 'Lehi, UT' }, to_number: '+13855550142' },
+    today: { dials: 12, answered: 3, voicemail: 6, noAnswer: 3, interested: 1 },
+    queue: 38,
+    recent: [
+      { id: 'd1', status: 'ended', outcome: 'gatekeeper', duration_s: 108, ended_at: new Date(Date.now() - 9 * 60000).toISOString(), leads: { salon: 'Studio Hue', city: 'Draper, UT' }, summary: 'Spoke with Bri (front desk). Owner is Marisa, in with clients till 3. Mornings are better. Hair-only, on Vagaro.', data: { owner_name: 'Marisa' }, transcript: [{ role: 'user', message: 'Studio Hue, this is Bri.' }, { role: 'agent', message: 'Hi Bri — this is Eryn, an AI assistant calling for Tally. Is the owner around, or is this a bad time?' }, { role: 'user', message: "She's with a client. What's this about?" }] },
+      { id: 'd2', status: 'ended', outcome: 'voicemail', duration_s: 22, ended_at: new Date(Date.now() - 14 * 60000).toISOString(), leads: { salon: 'Rooted Suites', city: 'Provo, UT' }, summary: 'Voicemail. Left the short message; text sent.' },
+      { id: 'd3', status: 'ended', outcome: 'answered_interested', duration_s: 171, ended_at: new Date(Date.now() - 31 * 60000).toISOString(), leads: { salon: 'Ember & Ash Hair Co', city: 'Wellington, FL' }, summary: 'Jenna (owner). Open 10–6, misses calls after 5. Interested in Night Desk; asked to be put on with Seth — transferred.', data: { owner_name: 'Jenna', hours: '10-6, closed Sunday' } },
+      { id: 'd4', status: 'ended', outcome: 'no_answer', duration_s: 0, ended_at: new Date(Date.now() - 40 * 60000).toISOString(), leads: { salon: 'Glass Door Salon', city: 'Orem, UT' } },
+    ],
+  };
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const [agentError, setAgentError] = useState('');
+  const refreshAgent = useCallback(async () => {
+    if (!enabled) { setAgentStatus(DEMO_AGENT); return; }
+    try {
+      const res = await fetch('/api/agent-shift', { headers: { ...(await authHeaders()) } });
+      if (!res.ok) { setAgentError((await res.json().catch(() => ({})))?.error || `Error ${res.status}`); return; }
+      setAgentStatus(await res.json()); setAgentError('');
+    } catch (e: any) { setAgentError(e?.message || 'Network error'); }
+  }, [enabled]);
+  // Poll while the Eryn screen is open, or a call is live anywhere.
+  useEffect(() => {
+    const busy = agentStatus?.live && ['queued', 'ringing', 'in_progress'].includes(agentStatus.live.status);
+    if (view !== 'agent' && !busy) return;
+    refreshAgent();
+    const t = setInterval(refreshAgent, view === 'agent' ? 5000 : 10000);
+    return () => clearInterval(t);
+  }, [view, refreshAgent, agentStatus?.live?.status]);
+
+  const agentShift = useCallback(async (action: 'start' | 'pause' | 'resume' | 'stop', cap?: number) => {
+    if (!enabled) {
+      setAgentStatus((s) => s ? { ...s, shift: action === 'stop' ? null : { ...(s.shift || { id: 'demo', dials: 0, answered: 0 }), status: action === 'pause' ? 'paused' : 'running', cap: cap || s.shift?.cap || 60 } } : s);
+      return { ok: true };
+    }
+    const res = await fetch('/api/agent-shift', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ action, cap }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) setAgentError(j?.error || `Error ${res.status}`);
+    await refreshAgent();
+    return res.ok ? { ok: true } : { ok: false, error: j?.error };
+  }, [enabled, refreshAgent]);
+
+  // Eryn dials one lead now. Returns the reason when Relay's rules say no.
+  const agentCall = useCallback(async (leadId: string, force?: boolean): Promise<{ ok: boolean; error?: string; reason?: string }> => {
+    if (!enabled) {
+      const l = leadsRef.current.find((x) => x.id === leadId);
+      setAgentStatus((s) => ({ ...(s || DEMO_AGENT), live: { id: 'demo-live', status: 'ringing', started_at: new Date().toISOString(), leads: { salon: l?.salon, city: l?.city }, to_number: l?.phone } }));
+      return { ok: true };
+    }
+    const res = await fetch('/api/agent-call', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ leadId, force: !!force }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (j?.reason === 'mobile') setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, owner: 'rep', lineType: 'mobile' } : l)));
+      return { ok: false, error: j?.error || `Error ${res.status}`, reason: j?.reason };
+    }
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, agentAttempts: (l.agentAttempts || 0) + 1 } : l)));
+    refreshAgent();
+    return { ok: true };
+  }, [enabled, refreshAgent]);
+
   const assignOwnerMany = useCallback((ids: string[], ownerRepId: string | null) => {
     if (!ids.length) return;
     const idSet = new Set(ids);
@@ -1168,6 +1240,7 @@ export function useRelay() {
     recentDials, matchLeadByNumber, logDial, sendKeypadText, saveNumberAsLead, addLead,
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
     isAdmin, repLeadCounts, loadTeam, inviteRep, resetRepPassword, emailPasswordReset, updateRep, assignOwnerMany,
+    setAgentOwnerMany, agentStatus, agentError, refreshAgent, agentShift, agentCall,
     stagedLeads, activeLeads, deployLeads,
     enrichableLeads, enrichLead, saveEnrichment, saveLeadEdits, deleteLead, removeFromCadence,
   };

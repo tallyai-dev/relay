@@ -72,6 +72,18 @@ export async function assignOwnerMany(leadIds: string[], ownerRepId: string | nu
   }
 }
 
+// Hand leads to Eryn (owner='agent') or take them back (owner='rep').
+export async function setAgentOwnerMany(leadIds: string[], owner: 'rep' | 'agent'): Promise<void> {
+  const sb = supabaseBrowser();
+  if (!sb || !leadIds.length) return;
+  const CHUNK = 200;
+  for (let i = 0; i < leadIds.length; i += CHUNK) {
+    const batch = leadIds.slice(i, i + CHUNK);
+    const { error } = await sb.from('leads').update({ owner }).in('id', batch);
+    if (error) console.error('setAgentOwnerMany', error);
+  }
+}
+
 // Email the user a password-reset link directly (Supabase sends the email).
 // Works from the sign-in screen (unauthenticated) and the admin Team screen.
 export async function sendPasswordResetEmail(email: string): Promise<{ ok: boolean; error?: string }> {
@@ -161,6 +173,11 @@ function rowToLead(row: any): Lead {
     callbackNote: row.callback_note || undefined,
     igUserId: row.ig_user_id || undefined,
     lastSocialAt: row.last_social_at || undefined,
+    owner: row.owner === 'agent' ? 'agent' : 'rep',
+    lineType: row.line_type || undefined,
+    dnc: !!row.dnc,
+    agentAttempts: row.agent_attempts ?? 0,
+    agentNextAt: row.agent_next_at || undefined,
   };
 }
 
