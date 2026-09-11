@@ -67,18 +67,18 @@ export async function igProfile(igsid: string): Promise<{ name?: string; usernam
   } catch (e: any) { console.error('igProfile', e?.message); return null; }
 }
 
-export interface IgPublicProfile { username: string; name?: string; biography?: string; website?: string; followers?: number }
+export interface IgPublicProfile { username: string; name?: string; biography?: string; website?: string; followers?: number; profilePic?: string; posts?: number }
 /** Public business/creator profile by @username (business_discovery). */
 export async function igBusinessDiscovery(username: string): Promise<IgPublicProfile | null> {
   const u = username.replace(/^@+/, '').trim();
   if (!u || !metaConfigured()) return null;
   try {
     const d = await graph(process.env.META_IG_ACCOUNT_ID!, {
-      query: { fields: `business_discovery.username(${u}){username,name,biography,website,followers_count}` },
+      query: { fields: `business_discovery.username(${u}){username,name,biography,website,followers_count,profile_picture_url,media_count}` },
     });
     const b = d.business_discovery;
     if (!b) return null;
-    return { username: b.username, name: b.name, biography: b.biography, website: b.website, followers: b.followers_count };
+    return { username: b.username, name: b.name, biography: b.biography, website: b.website, followers: b.followers_count, profilePic: b.profile_picture_url, posts: b.media_count };
   } catch (e: any) { console.error('business_discovery', e?.message); return null; }
 }
 

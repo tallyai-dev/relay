@@ -165,7 +165,7 @@ export async function POST(req: Request) {
   // Instagram handle → public profile (business_discovery) first: it gives the
   // real business name + website + bio, which then feeds the Places lookup.
   const handle = String(body.handle || '').replace(/^@+/, '').trim();
-  let ig: { username: string; name?: string; biography?: string; website?: string; followers?: number } | null = null;
+  let ig: { username: string; name?: string; biography?: string; website?: string; followers?: number; profilePic?: string; posts?: number } | null = null;
   if (handle) {
     ig = await igBusinessDiscovery(handle);
     if (ig?.name && (!salon || salon === `@${handle}` || salon === handle)) salon = ig.name;
@@ -173,7 +173,7 @@ export async function POST(req: Request) {
   if (!salon && !ig) return Response.json({ found: false, error: 'Salon name or Instagram handle required.' }, { status: 400 });
   if (!key) {
     // No Places key: still return whatever Instagram gave us.
-    if (ig) return Response.json({ found: true, name: ig.name, website: ig.website, bio: ig.biography, followers: ig.followers, handle: `@${ig.username}`, ...(ig.website ? await scanSite(ig.website) : {}) });
+    if (ig) return Response.json({ found: true, igFound: true, name: ig.name, website: ig.website, bio: ig.biography, followers: ig.followers, posts: ig.posts, profilePic: ig.profilePic, handle: `@${ig.username}`, ...(ig.website ? await scanSite(ig.website) : {}) });
     return Response.json({ found: false, error: 'Places API not configured.' }, { status: 503 });
   }
   if (!salon) salon = `@${handle}`;
@@ -198,7 +198,7 @@ export async function POST(req: Request) {
     const data = await res.json();
     const places: any[] = data?.places || [];
     if (!places.length) {
-      if (ig) return Response.json({ found: true, name: ig.name, website: ig.website, bio: ig.biography, followers: ig.followers, handle: `@${ig.username}`, ...(ig.website ? await scanSite(ig.website) : {}) });
+      if (ig) return Response.json({ found: true, igFound: true, name: ig.name, website: ig.website, bio: ig.biography, followers: ig.followers, posts: ig.posts, profilePic: ig.profilePic, handle: `@${ig.username}`, ...(ig.website ? await scanSite(ig.website) : {}) });
       return Response.json({ found: false });
     }
 
@@ -250,8 +250,12 @@ export async function POST(req: Request) {
       address: p.formattedAddress || undefined,
       hours: p.regularOpeningHours?.weekdayDescriptions || undefined,
       handle: ig ? `@${ig.username}` : undefined,
+      igFound: !!ig,
+      igName: ig?.name,
       bio: ig?.biography,
       followers: ig?.followers,
+      posts: ig?.posts,
+      profilePic: ig?.profilePic,
     });
   } catch (e: any) {
     console.error('enrich exception', e?.message);

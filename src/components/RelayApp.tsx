@@ -73,6 +73,31 @@ function parseHandle(input: string): { user: string; handle: string; url: string
   return { user: u, handle: u ? '@' + u : '', url: u ? 'https://instagram.com/' + u : '', valid };
 }
 
+interface PullPreview { igFound: boolean; handle: string; name?: string; bio?: string; followers?: number; posts?: number; profilePic?: string; website?: string; phone?: string; email?: string; bookingSystem?: string; city?: string; placesName?: string }
+// "Is this her?" — what Pull from Instagram found, before it fills the form.
+function PullPreviewCard({ p, onYes, onNo }: { p: PullPreview; onYes: () => void; onNo: () => void }) {
+  const initials = (p.name || p.handle).replace(/^@/, '').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const facts = [p.phone, p.website, p.bookingSystem, p.city].filter(Boolean);
+  return (
+    <div className="pull-card">
+      <div className="pull-top">
+        {p.profilePic ? <img className="pull-av" src={p.profilePic} alt="" referrerPolicy="no-referrer" /> : <div className="pull-av pull-av-txt">{initials}</div>}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="pull-nm">{p.name || p.placesName || p.handle}</div>
+          <div className="pull-mt">{p.handle}{p.followers != null ? ` · ${p.followers.toLocaleString()} followers` : ''}{p.posts != null ? ` · ${p.posts} posts` : ''}</div>
+          {p.bio && <div className="pull-bio">{p.bio}</div>}
+          {!p.igFound && <div className="pull-warn">Instagram gave nothing back — personal account, or Meta isn&apos;t connected yet. {p.placesName ? 'This is the closest Google listing:' : 'Fill it in by hand.'}</div>}
+          {facts.length > 0 && <div className="pull-facts">{facts.map((f, i) => <span key={i}>{f}</span>)}</div>}
+        </div>
+      </div>
+      <div className="pull-q"><span>Is this her?</span>
+        <button type="button" className="btn sm" onClick={onNo}>Not her</button>
+        <button type="button" className="btn sm primary" onClick={onYes}>Yes, use this</button>
+      </div>
+    </div>
+  );
+}
+
 // Create a lead by hand. An Instagram handle is verified (valid format), linked
 // (opens the live profile to confirm), and tags the lead source=instagram so the
 // avatar badge shows.
@@ -83,6 +108,8 @@ function NewLeadModal({ r, onClose, prefill }: { r: R; onClose: () => void; pref
   const [notes, setNotes] = useState(prefill?.text && !/^https?:/i.test(prefill.text) ? prefill.text : '');
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState<string | null>(null);
+  // What the pull found, held for a yes/no before it touches the form.
+  const [preview, setPreview] = useState<PullPreview | null>(null);
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [website, setWebsite] = useState('');
@@ -97,25 +124,34 @@ function NewLeadModal({ r, onClose, prefill }: { r: R; onClose: () => void; pref
     await r.addLead({ salon: salon.trim() || h.handle, contactName: name, handle: h.user, phone, email, website, bookingSystem: booking, city, cadenceId: cadenceId || undefined, notes: notes.trim() || undefined });
     setBusy(false); onClose();
   };
-  // Pull the public profile (name, site, bio) + phone/booking off the site.
+  // Pull the public profile (name, pic, bio, site) + phone/booking off the
+  // site — into a preview card first, so you confirm it's her before anything
+  // lands in the form.
   const pull = async () => {
     if (!h.valid) return;
-    setPulling(true); setPullMsg(null);
+    setPulling(true); setPullMsg(null); setPreview(null);
     try {
       const res = await fetch('/api/enrich', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: h.user, salon: salon.trim() || undefined, city: city.trim() || undefined }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j.found) { setPullMsg(j.error || 'Nothing found for that handle yet — fill it in by hand.'); return; }
-      const got: string[] = [];
-      if (j.name && !salon.trim()) { setSalon(j.name); got.push('name'); }
-      if (j.phone && !phone.trim()) { setPhone(j.phone); got.push('phone'); }
-      if (j.email && !email.trim()) { setEmail(j.email); got.push('email'); }
-      if (j.website && !website.trim()) { setWebsite(String(j.website).replace(/^https?:\/\//, '').replace(/\/$/, '')); got.push('website'); }
-      if (j.bookingSystem && !booking.trim()) { setBooking(j.bookingSystem); got.push('booking'); }
-      if (j.city && !city.trim()) { setCity(j.city); got.push('city'); }
-      setPullMsg(got.length ? `✓ Pulled ${got.join(', ')}` : 'Profile found — nothing new to add.');
+      setPreview({ igFound: !!j.igFound, handle: j.handle || h.handle, name: j.igName || j.name, bio: j.bio, followers: j.followers, posts: j.posts, profilePic: j.profilePic, website: j.website, phone: j.phone, email: j.email, bookingSystem: j.bookingSystem, city: j.city, placesName: j.name });
     } catch { setPullMsg('Lookup failed.'); }
     finally { setPulling(false); }
   };
+  const acceptPreview = () => {
+    if (!preview) return;
+    const got: string[] = [];
+    const nm = preview.name || preview.placesName;
+    if (nm && !salon.trim()) { setSalon(nm); got.push('name'); }
+    if (preview.phone && !phone.trim()) { setPhone(preview.phone); got.push('phone'); }
+    if (preview.email && !email.trim()) { setEmail(preview.email); got.push('email'); }
+    if (preview.website && !website.trim()) { setWebsite(String(preview.website).replace(/^https?:\/\//, '').replace(/\/$/, '')); got.push('website'); }
+    if (preview.bookingSystem && !booking.trim()) { setBooking(preview.bookingSystem); got.push('booking'); }
+    if (preview.city && !city.trim()) { setCity(preview.city); got.push('city'); }
+    setPullMsg(got.length ? `✓ Pulled ${got.join(', ')}` : 'Confirmed — nothing new to add.');
+    setPreview(null);
+  };
+  const rejectPreview = () => { setPreview(null); setPullMsg('Not her — check the handle and pull again, or fill it in by hand.'); };
   const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid var(--line)', borderRadius: 8, padding: '8px 10px', fontSize: 13, background: 'var(--panel)', color: 'var(--ink)' };
   const field = (label: string, val: string, set: (v: string) => void, ph = '', type = 'text') => (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -141,6 +177,7 @@ function NewLeadModal({ r, onClose, prefill }: { r: R; onClose: () => void; pref
               </div>
             )}
           </label>
+          {preview && <PullPreviewCard p={preview} onYes={acceptPreview} onNo={rejectPreview} />}
           {(prefill?.platform === 'tiktok' && prefill.handle) && <div style={{ fontSize: 12, color: 'var(--ink2)' }}>TikTok <b>@{prefill.handle}</b> — TikTok has no DM API, so Relay keeps the handle in the notes and works her by call/text.</div>}
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--ink3)' }}>Their ask (comment / DM · optional)</span>
