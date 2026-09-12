@@ -132,3 +132,41 @@ export function renderTpl(tpl: string, ctx: TplContext): string {
     .replace(/\s+—/g, ' —')
     .replace(/Hi\s+—/g, 'Hi —');
 }
+
+// ── Overrides ────────────────────────────────────────────────────────────────
+// Admins can rewrite any template in Relay → Templates. Overrides are keyed
+// '<kind>:<key>' and hold the edited body (and subject for emails). Apply them
+// with withOverrides() before rendering so the sheet, the composer, and Eryn's
+// follow-up texts all say the same thing.
+export type TplKind = 'text' | 'email' | 'product';
+export type TplOverride = { subject?: string | null; body: string; updatedAt?: string };
+export type TplOverrides = Record<string, TplOverride>;   // 'text:na1' → { body }
+
+/** Which text templates Eryn sends automatically after her calls. */
+export const ERYN_TEXT_KEYS: Record<string, string> = { na1: 'no answer · first try', vm: 'voicemail, or a later miss', gate: 'front desk took a message' };
+
+export function withOverrides<T extends { key: string; body: string; subject?: string }>(list: T[], kind: TplKind, ov?: TplOverrides | null): T[] {
+  if (!ov) return list;
+  return list.map((t) => {
+    const o = ov[`${kind}:${t.key}`];
+    if (!o) return t;
+    return { ...t, body: o.body, ...(t.subject !== undefined && o.subject ? { subject: o.subject } : {}) };
+  });
+}
+
+/** The tokens a template may use, for the editor's legend. */
+export const TPL_TOKENS: { token: string; means: string }[] = [
+  { token: '{first_name}', means: "her first name, with its own leading space (blank when unknown — 'Hi{first_name},' reads fine either way)" },
+  { token: '{salon}', means: 'salon name' },
+  { token: '{rep}', means: "the sending rep's first name" },
+  { token: '{rep_cell}', means: "the rep's cell, formatted" },
+  { token: '{demo_line}', means: `the Luna & Main demo line (${DEMO_LINE})` },
+  { token: '{link}', means: `the demo link (${DEMO_LINK})` },
+  { token: '{booking_system}', means: "her booking software, or 'booking'" },
+  { token: '{city}', means: 'her city' },
+  { token: '{email}', means: 'her email' },
+  { token: '{product}', means: 'the product she asked about (wants-info flow)' },
+  { token: '{callback_time}', means: 'the time she named' },
+  { token: '{meeting_time} {meeting_link} {calendly}', means: 'demo details' },
+  { token: '{season} {when} {nurture_item}', means: 'fill-ins for the later / nurture templates' },
+];

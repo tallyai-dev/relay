@@ -72,6 +72,31 @@ export async function assignOwnerMany(leadIds: string[], ownerRepId: string | nu
   }
 }
 
+// Editable templates: admin overrides keyed '<kind>:<key>'.
+export async function fetchTemplateOverrides(): Promise<Record<string, { subject?: string | null; body: string; updatedAt?: string }>> {
+  const sb = supabaseBrowser();
+  if (!sb) return {};
+  const { data, error } = await sb.from('template_overrides').select('key, subject, body, updated_at');
+  if (error) { console.error('fetchTemplateOverrides', error); return {}; }
+  const out: Record<string, { subject?: string | null; body: string; updatedAt?: string }> = {};
+  for (const r of data || []) out[r.key] = { subject: r.subject, body: r.body, updatedAt: r.updated_at };
+  return out;
+}
+export async function saveTemplateOverride(key: string, kind: 'text' | 'email' | 'product', patch: { subject?: string | null; body: string }, repId?: string): Promise<string | null> {
+  const sb = supabaseBrowser();
+  if (!sb) return null;
+  const { error } = await sb.from('template_overrides').upsert({ key, kind, subject: patch.subject ?? null, body: patch.body, updated_by: repId ?? null, updated_at: new Date().toISOString() });
+  if (error) { console.error('saveTemplateOverride', error); return error.message; }
+  return null;
+}
+export async function deleteTemplateOverride(key: string): Promise<string | null> {
+  const sb = supabaseBrowser();
+  if (!sb) return null;
+  const { error } = await sb.from('template_overrides').delete().eq('key', key);
+  if (error) { console.error('deleteTemplateOverride', error); return error.message; }
+  return null;
+}
+
 // Hand leads to Eryn (owner='agent') or take them back (owner='rep').
 export async function setAgentOwnerMany(leadIds: string[], owner: 'rep' | 'agent'): Promise<void> {
   const sb = supabaseBrowser();

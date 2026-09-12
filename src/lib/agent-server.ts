@@ -18,7 +18,8 @@ import { twilioClient } from '@/lib/twilio';
 import { toE164 } from '@/lib/csv';
 import { startOutboundCall, getConversation, ERYN } from '@/lib/elevenlabs';
 import { sendSmsServer } from '@/lib/sms-server';
-import { TEXT_TEMPLATES, renderTpl } from '@/lib/templates';
+import { TEXT_TEMPLATES, renderTpl, withOverrides } from '@/lib/templates';
+import { loadTemplateOverrides } from '@/lib/templates-server';
 import type { AgentOutcome, Lead } from '@/lib/types';
 
 export const MAX_ATTEMPTS = 3;
@@ -292,7 +293,7 @@ export async function handlePostCall(data: any): Promise<{ ok: boolean; outcome?
     const { data: recent } = await db.from('messages').select('id').eq('lead_id', lead.id).eq('channel', 'text').eq('direction', 'out')
       .gte('created_at', new Date(Date.now() - 20 * 3600e3).toISOString()).limit(1);
     if (!recent || !recent.length) {
-      const tpl = TEXT_TEMPLATES.find((t) => t.key === textKey);
+      const tpl = withOverrides(TEXT_TEMPLATES, 'text', await loadTemplateOverrides()).find((t) => t.key === textKey);
       let me: any = null;
       const repId = call.rep_id || lead.owner_rep_id || lead.last_rep_id || null;
       if (repId) ({ data: me } = await db.from('reps').select('id, name, forward_to, phone_number').eq('id', repId).maybeSingle());

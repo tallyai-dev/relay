@@ -1,13 +1,14 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentView, AgentCallButton, ErynMark } from '@/components/AgentView';
+import { TemplatesEditor } from '@/components/TemplatesEditor';
 import { useRelay, isOverdue, type EnrichResult, EnrichCandidate } from '@/hooks/useRelay';
 import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch, dmOpen, resolveChannel, IG_DM } from '@/lib/cadence';
 import { enablePush, pushState, type PushState } from '@/lib/push';
 import { placeCall, normalizePhone } from '@/lib/voice';
 import { openCalendly, CALENDLY_URL } from '@/lib/calendly';
-import { TEXT_TEMPLATES, PRODUCT_TEMPLATES, EMAIL_TEMPLATES_LIB, renderTpl } from '@/lib/templates';
+import { type PRODUCT_TEMPLATES, renderTpl } from '@/lib/templates';
 import { analyzeImport } from '@/lib/csv';
 import { fetchActivityFeed, type FeedActivity } from '@/lib/repo';
 import { BoltMark } from '@/components/Logo';
@@ -48,6 +49,7 @@ export default function RelayApp() {
           {r.view === 'inbox' && <Inbox r={r} />}
           {r.view === 'cadences' && <CadenceBuilder r={r} />}
           {r.view === 'agent' && <AgentView r={r} />}
+          {r.view === 'templates' && <TemplatesEditor r={r} />}
           {r.view === 'team' && <TeamView r={r} onViewActivity={(id) => { setReportsRep(id); r.setView('reports'); }} />}
           {r.view === 'reports' && <ReportsView r={r} repFilter={reportsRep} setRepFilter={setReportsRep} />}
         </div>
@@ -452,7 +454,7 @@ function TopBar({ r, onImport }: { r: R; onImport: () => void }) {
   const s = r.stats;
   return (
     <div className="topbar">
-      <div><div className="title">{r.view === 'dialer' ? 'Dialer session' : r.view === 'agent' ? 'Eryn · AI cold calls' : r.view[0].toUpperCase() + r.view.slice(1)}</div></div>
+      <div><div className="title">{r.view === 'dialer' ? 'Dialer session' : r.view === 'agent' ? 'Eryn · AI cold calls' : r.view === 'templates' ? 'Templates' : r.view[0].toUpperCase() + r.view.slice(1)}</div></div>
       <div className="metrics">
         <span className="metrics-day" title="Counts reset at midnight">Today</span>
         <div className="metric"><span>Dials</span><b>{s.dials}</b></div>
@@ -1480,7 +1482,7 @@ function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { 
   };
   const pickProduct = (p: typeof PRODUCT_TEMPLATES[number]) => {
     // Text now (if she has a phone), email as a draft to glance at.
-    const info = TEXT_TEMPLATES.find((t) => t.key === 'info')!;
+    const info = r.textTemplates.find((t) => t.key === 'info')!;
     if (lead.phone) { r.sendReply(lead.id, renderTpl(info.body, { ...ctx, product: p.product }), 'text'); setMsg(`✓ "Wants info" text sent · ${p.product} email drafted`); }
     else setMsg(`No phone on file — ${p.product} email drafted`);
     if (lead.email) setEmailInit({ subject: renderTpl(p.subject, ctx), body: renderTpl(p.body, ctx) });
@@ -1489,7 +1491,7 @@ function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { 
   return (
     <div className="overlay on" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal tpl-modal" style={{ maxWidth: 560 }}>
-        <div className="mh"><h3>Templates · {lead.salon}</h3><button className="x" onClick={onClose}>×</button></div>
+        <div className="mh"><h3>Templates · {lead.salon}</h3>{r.isAdmin && <button className="btn sm" style={{ marginLeft: 'auto', marginRight: 8 }} onClick={() => { onClose(); r.setView('templates'); }}>Edit templates</button>}<button className="x" onClick={onClose}>×</button></div>
         <div className="mb tpl-body">
           <div className="tpl-tabs">
             <button className={tab === 'text' ? 'on' : ''} onClick={() => setTab('text')}>Texts</button>
@@ -1501,7 +1503,7 @@ function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { 
           {tab === 'text' && (
             <div className="tpl-list">
               {!lead.phone && <div className="tpl-warn">No phone on file — pick one to copy the wording, or add her number first.</div>}
-              {TEXT_TEMPLATES.filter((t) => hit(t.label, t.body)).map((t) => (
+              {r.textTemplates.filter((t) => hit(t.label, t.body)).map((t) => (
                 <div key={t.key} className={`tpl-item ${sel === t.key ? 'on' : ''}`}>
                   <button className="tpl-head" onClick={() => pickText(t.key, t.body)}>
                     <span className="tpl-lab">{t.label}</span><span className="tpl-when">{t.when}</span>
@@ -1524,7 +1526,7 @@ function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { 
           {tab === 'email' && (
             <div className="tpl-list">
               {!lead.email && <div className="tpl-warn">No email on file — enrich the lead or add one, then these open in the composer.</div>}
-              {EMAIL_TEMPLATES_LIB.filter((t) => hit(t.label, t.body)).map((t) => (
+              {r.emailTemplates.filter((t) => hit(t.label, t.body)).map((t) => (
                 <div key={t.key} className="tpl-item">
                   <button className="tpl-head" onClick={() => lead.email ? setEmailInit({ subject: renderTpl(t.subject, ctx), body: renderTpl(t.body, ctx) }) : setMsg('Add an email address first.')}>
                     <span className="tpl-lab">{t.label}</span>{t.when && <span className="tpl-when">{t.when}</span>}
@@ -1538,7 +1540,7 @@ function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { 
           {tab === 'product' && (
             <div className="tpl-list">
               <div className="tpl-note">She asked for more info. Pick what came up: the <b>&ldquo;wants info&rdquo;</b> text goes now{lead.phone ? ` to ${fmtPhone(lead.phone)}` : ' (no phone on file)'}, and the product email opens as a draft{lead.email ? ` for ${lead.email}` : ' (no email on file)'}.</div>
-              {PRODUCT_TEMPLATES.map((p) => (
+              {r.productTemplates.map((p) => (
                 <div key={p.key} className="tpl-item">
                   <button className="tpl-head" onClick={() => pickProduct(p)}>
                     <span className="tpl-lab">{p.product}</span><span className="tpl-when">{p.price}</span>
@@ -1619,8 +1621,8 @@ function EmailComposer({ r, lead, onClose, initial }: { r: R; lead: Lead; onClos
           <div className="em-tofrom">To <b>{lead.email}</b> · from <b>sales@gettallyai.com</b></div>
           <div className="em-templates">
             <span className="em-tpl-label">Start from:</span>
-            {EMAIL_TEMPLATES_LIB.map((t) => <button key={t.key} className="em-tpl" onClick={() => applyLib(t)} title={t.when}>{t.label}</button>)}
-            {PRODUCT_TEMPLATES.map((t) => <button key={t.key} className="em-tpl prod" onClick={() => applyLib(t)} title={t.price}>{t.label}</button>)}
+            {r.emailTemplates.map((t) => <button key={t.key} className="em-tpl" onClick={() => applyLib(t)} title={t.when}>{t.label}</button>)}
+            {r.productTemplates.map((t) => <button key={t.key} className="em-tpl prod" onClick={() => applyLib(t)} title={t.price}>{t.label}</button>)}
             {EMAIL_TEMPLATES.map((t) => <button key={t.key} className="em-tpl old" onClick={() => apply(t)}>{t.label}</button>)}
             <button className="em-tpl" onClick={() => { setSubject(''); setBody(''); }}>Blank</button>
           </div>
@@ -2567,7 +2569,7 @@ function CadenceBuilder({ r }: { r: R }) {
     <section className="view on">
       <div className="page-head">
         <div><h1>Cadences</h1><p>{r.cadences.length} cadence{r.cadences.length === 1 ? '' : 's'} · build the call / text / email sequence Flow works through</p></div>
-        <button className="btn primary" onClick={create}>+ New cadence</button>
+        <div style={{ display: 'flex', gap: 8 }}><button className="btn" onClick={() => r.setView('templates')} title="Edit the text + email templates">📄 Templates</button><button className="btn primary" onClick={create}>+ New cadence</button></div>
       </div>
       <div className="cadbuild">
         <div className="cad-list">

@@ -3,11 +3,12 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Lead, Activity, Channel, Disposition, DispositionKey, CadenceStep, Stage, Message, Rep, Cadence } from '@/lib/types';
 import { SEED_LEADS, SEED_ACTIVITIES, SEED_MESSAGES } from '@/lib/seedData';
 import { planForStage, callAttempt, AI_NOTE, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, branchFor, DISPO_LABEL, INSTAGRAM_CADENCE_ID, IG_SMS, IG_DM, IG_EMAIL_BODY, IG_EMAIL_SUBJECT, resolveChannel, dmOpen } from '@/lib/cadence';
-import { authHeaders, setLeadCallback, repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, createLead, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, setAgentOwnerMany as setAgentOwnerManyRepo, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
+import { authHeaders, setLeadCallback, repoEnabled, fetchLeads, fetchActivities, fetchTodayStats, fetchCadenceProgress, updateCadencePos, insertActivity, updateStage, attachLatestOwnNote, bulkInsertLeads, fetchMessages, markThreadRead, markMessagesRead, subscribeMessages, subscribeActivities, fetchMe, fetchReps, signOut as repoSignOut, fetchCadences, createCadence, renameCadence, deleteCadence, saveCadenceSteps, assignLeadCadence, createLeadQuick, createLead, setLeadNextAction, deployStagedLeads, importInstagramLeads, updateLeadEnrichment, updateLeadFields, markCadenceComplete, bulkAssignCadence, deleteLead as deleteLeadRepo, fetchRepLeadCounts, updateRep as updateRepRepo, assignOwnerMany as assignOwnerManyRepo, setAgentOwnerMany as setAgentOwnerManyRepo, fetchTemplateOverrides, saveTemplateOverride, deleteTemplateOverride, inviteRep as inviteRepRepo, resetRepPassword as resetRepPasswordRepo, sendPasswordResetEmail } from '@/lib/repo';
 import type { ImportRow } from '@/lib/repo';
+import { TEXT_TEMPLATES, EMAIL_TEMPLATES_LIB, PRODUCT_TEMPLATES, withOverrides, type TplOverrides, type TplKind } from '@/lib/templates';
 import { mapToImportRows } from '@/lib/csv';
 
-export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile' | 'team' | 'agent';
+export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile' | 'team' | 'agent' | 'templates';
 
 // Eryn's screen: what /api/agent-shift returns.
 export interface AgentStatus { shift: any | null; live: any | null; today: { dials: number; answered: number; voicemail: number; noAnswer: number; interested: number }; queue: number; recent: any[] }
@@ -956,6 +957,25 @@ export function useRelay() {
   }, [enabled]);
 
   // Assign many leads to a rep (or null to unassign), optimistic.
+  // ── Editable templates ───────────────────────────────────────────────────────
+  const [tplOverrides, setTplOverrides] = useState<TplOverrides>({});
+  useEffect(() => { if (enabled) fetchTemplateOverrides().then(setTplOverrides); }, [enabled]);
+  const textTemplates = useMemo(() => withOverrides(TEXT_TEMPLATES, 'text', tplOverrides), [tplOverrides]);
+  const emailTemplates = useMemo(() => withOverrides(EMAIL_TEMPLATES_LIB, 'email', tplOverrides), [tplOverrides]);
+  const productTemplates = useMemo(() => withOverrides(PRODUCT_TEMPLATES, 'product', tplOverrides), [tplOverrides]);
+  const saveTemplate = useCallback(async (kind: TplKind, key: string, patch: { subject?: string | null; body: string }) => {
+    const k = `${kind}:${key}`;
+    setTplOverrides((o) => ({ ...o, [k]: { ...patch, updatedAt: new Date().toISOString() } }));
+    if (!enabled) return null;
+    return saveTemplateOverride(k, kind, patch, meRef.current?.id);
+  }, [enabled]);
+  const resetTemplate = useCallback(async (kind: TplKind, key: string) => {
+    const k = `${kind}:${key}`;
+    setTplOverrides((o) => { const n = { ...o }; delete n[k]; return n; });
+    if (!enabled) return null;
+    return deleteTemplateOverride(k);
+  }, [enabled]);
+
   // ── Eryn (AI cold caller) ────────────────────────────────────────────────────
   const setAgentOwnerMany = useCallback((ids: string[], owner: 'rep' | 'agent') => {
     if (!ids.length) return;
@@ -1241,6 +1261,7 @@ export function useRelay() {
     dueLeads, scheduledLeads, startDueFlow, snoozeLead, warmLeadIds,
     isAdmin, repLeadCounts, loadTeam, inviteRep, resetRepPassword, emailPasswordReset, updateRep, assignOwnerMany,
     setAgentOwnerMany, agentStatus, agentError, refreshAgent, agentShift, agentCall,
+    tplOverrides, textTemplates, emailTemplates, productTemplates, saveTemplate, resetTemplate,
     stagedLeads, activeLeads, deployLeads,
     enrichableLeads, enrichLead, saveEnrichment, saveLeadEdits, deleteLead, removeFromCadence,
   };
