@@ -1,16 +1,16 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentView, AgentCallButton, ErynMark } from '@/components/AgentView';
 import { TemplatesEditor } from '@/components/TemplatesEditor';
 import { useRelay, isOverdue, type EnrichResult, EnrichCandidate } from '@/hooks/useRelay';
-import type { Lead, Cadence, CadenceStep, Channel, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
+import type { Lead, Cadence, CadenceStep, Channel, Disposition, DispositionKey, BranchAction, Branches, Stage, Activity } from '@/lib/types';
 import { renderTemplate, DEFAULT_SMS, DEFAULT_EMAIL_BODY, DEFAULT_EMAIL_SUBJECT, DISPOSITIONS, branchFor, describeBranch, dmOpen, resolveChannel, IG_DM } from '@/lib/cadence';
 import { enablePush, pushState, type PushState } from '@/lib/push';
 import { placeCall, normalizePhone } from '@/lib/voice';
 import { openCalendly, CALENDLY_URL } from '@/lib/calendly';
 import { type PRODUCT_TEMPLATES, renderTpl } from '@/lib/templates';
 import { analyzeImport } from '@/lib/csv';
-import { fetchActivityFeed, type FeedActivity } from '@/lib/repo';
+import { authHeaders, fetchActivityFeed, type FeedActivity } from '@/lib/repo';
 import { BoltMark } from '@/components/Logo';
 
 type R = ReturnType<typeof useRelay>;
@@ -2957,8 +2957,295 @@ function Keypad({ r }: { r: R }) {
 }
 
 // ── Floating dial button (global quick-dial keypad) ─────────────────────────
+// ── Call history (keypad button → Recent) ──────────────────────────────────────
+type CallRow = {
+  id: string; at: string; direction: 'in' | 'out' | null; status: string | null; dialStatus: string | null;
+  durationS: number | null; talkS: number | null; from: string | null; to: string | null; recordingUrl: string | null;
+  note: string | null; outcome: string | null; notedAt: string | null; logged: boolean;
+  leadId: string | null; salon: string | null; city: string | null; repId: string | null; repName: string | null;
+};
+
+const CALL_OUTCOMES: { key: string; label: string; dispo?: Disposition }[] = [
+  { key: 'no_answer', label: 'No answer', dispo: 'no_answer' },
+  { key: 'voicemail', label: 'Voicemail', dispo: 'voicemail' },
+  { key: 'front_desk', label: 'Front desk', dispo: 'connected' },
+  { key: 'connected', label: 'Talked', dispo: 'connected' },
+  { key: 'callback', label: 'Callback', dispo: 'callback' },
+  { key: 'booked', label: 'Demo booked', dispo: 'booked' },
+  { key: 'not_interested', label: 'Not interested', dispo: 'not_interested' },
+  { key: 'wrong_number', label: 'Wrong number', dispo: 'wrong_number' },
+];
+
+// Demo mode (no Supabase) — enough rows to show every state.
+const DEMO_CALLS: CallRow[] = (() => {
+  const ago = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  const base = { durationS: null, recordingUrl: null, note: null, outcome: null, notedAt: null, repId: null, city: null };
+  return [
+    { ...base, id: 'dc1', at: ago(18), direction: 'in', status: 'voicemail', dialStatus: null, talkS: 22, from: '+17025550184', to: '+18019236320', logged: false, leadId: null, salon: null, repName: null },
+    { ...base, id: 'dc2', at: ago(95), direction: 'in', status: 'ringing', dialStatus: 'answered', talkS: 372, from: '+12085550198', to: '+18019236320', logged: true, leadId: 'l2', salon: 'The Mane Room', city: 'Boise, ID', repName: 'Seth', note: 'Wants pricing for 2 locations.', outcome: 'connected', notedAt: ago(90) },
+    { ...base, id: 'dc3', at: ago(60 * 26), direction: 'out', status: 'completed', dialStatus: 'no-answer', talkS: 0, from: '+18019236320', to: '(207) 555-0142', logged: false, leadId: 'l1', salon: 'Luxe Hair Studio', city: 'Portland, ME', repName: 'Kade' },
+    { ...base, id: 'dc4', at: ago(60 * 27), direction: 'out', status: 'completed', dialStatus: 'completed', talkS: 131, from: '+18019236320', to: '(801) 555-0110', logged: false, leadId: 'l3', salon: 'Shear Bliss Salon', city: 'Provo, UT', repName: 'Seth' },
+  ] as CallRow[];
+})();
+
+function callResult(c: CallRow): { label: string; tone: 'ok' | 'miss' | 'plain' } {
+  if (c.direction === 'in') {
+    if (c.dialStatus === 'answered' || c.dialStatus === 'completed') return { label: 'Answered', tone: 'ok' };
+    if (c.status === 'voicemail') return { label: 'Voicemail', tone: 'miss' };
+    return { label: 'Missed', tone: 'miss' };
+  }
+  switch (c.dialStatus) {
+    case 'completed': case 'answered': return { label: 'Answered', tone: 'ok' };
+    case 'no-answer': return { label: 'No answer', tone: 'plain' };
+    case 'busy': return { label: 'Busy', tone: 'plain' };
+    case 'failed': return { label: 'Didn’t go through', tone: 'miss' };
+    case 'canceled': return { label: 'Hung up before she answered', tone: 'plain' };
+  }
+  if (c.status === 'no-answer' || c.status === 'busy') return { label: 'Your cell didn’t pick up', tone: 'plain' };
+  return { label: 'Outbound', tone: 'plain' };
+}
+const fmtSecs = (s: number | null | undefined) => (s == null ? '' : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+const dayLabel = (iso: string) => {
+  const d = new Date(iso); const today = new Date(); const y = new Date(); y.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+};
+const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+type CallFilter = 'all' | 'missed' | 'needs' | 'mine';
+
+function CallHistory({ r, onCallNumber, onTextNumber, onClose }: { r: R; onCallNumber: (n: string) => void; onTextNumber: (n: string) => void; onClose: () => void }) {
+  const [calls, setCalls] = useState<CallRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [filter, setFilter] = useState<CallFilter>('all');
+  const [q, setQ] = useState('');
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!r.enabled) { setCalls(DEMO_CALLS); return; }
+    setErr(null);
+    try {
+      const res = await fetch('/api/calls', { headers: await authHeaders() });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { setErr(j.error || `Couldn’t load calls (${res.status})`); setCalls([]); return; }
+      setCalls(j.calls || []);
+    } catch { setErr('Network error — couldn’t load calls.'); setCalls([]); }
+  }, [r.enabled]);
+  useEffect(() => { load(); }, [load]);
+
+  const other = (c: CallRow) => (c.direction === 'in' ? c.from : c.to) || '';
+  const list = (calls || []).filter((c) => {
+    if (filter === 'missed' && !(c.direction === 'in' && callResult(c).tone === 'miss')) return false;
+    if (filter === 'needs' && c.logged) return false;
+    if (filter === 'mine' && c.repId !== r.me?.id) return false;
+    if (q.trim()) {
+      const n = q.toLowerCase(); const digits = q.replace(/\D/g, '');
+      const hit = (c.salon || '').toLowerCase().includes(n) || (digits.length >= 3 && other(c).replace(/\D/g, '').includes(digits));
+      if (!hit) return false;
+    }
+    return true;
+  });
+  const needs = (calls || []).filter((c) => !c.logged).length;
+  const missed = (calls || []).filter((c) => c.direction === 'in' && callResult(c).tone === 'miss').length;
+  const open = openId ? (calls || []).find((c) => c.id === openId) : undefined;
+
+  if (open) {
+    return <CallDetail key={open.id} r={r} call={open} onBack={() => setOpenId(null)} onClose={onClose}
+      onSaved={(patch) => setCalls((prev) => (prev || []).map((c) => (c.id === open.id ? { ...c, ...patch } : c)))}
+      onCallNumber={onCallNumber} onTextNumber={onTextNumber} />;
+  }
+
+  let lastDay = '';
+  return (
+    <div className="ch-wrap">
+      <div className="ch-tools">
+        <input className="ch-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search salon or number" aria-label="Search calls" />
+        <div className="ch-chips">
+          <button className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All</button>
+          <button className={filter === 'needs' ? 'on' : ''} onClick={() => setFilter('needs')}>Needs a note{needs ? ` · ${needs}` : ''}</button>
+          <button className={filter === 'missed' ? 'on' : ''} onClick={() => setFilter('missed')}>Missed{missed ? ` · ${missed}` : ''}</button>
+          <button className={filter === 'mine' ? 'on' : ''} onClick={() => setFilter('mine')}>Mine</button>
+        </div>
+      </div>
+      <div className="ch-list">
+        {calls === null && <div className="ch-empty">Loading calls…</div>}
+        {err && <div className="ch-empty bad">{err} <button className="btn sm" onClick={load}>Retry</button></div>}
+        {calls !== null && !err && list.length === 0 && <div className="ch-empty">{calls.length ? 'No calls match.' : 'No calls in the last two weeks.'}</div>}
+        {list.map((c) => {
+          const day = dayLabel(c.at);
+          const head = day !== lastDay ? <div className="ch-day">{day}</div> : null;
+          lastDay = day;
+          const res = callResult(c);
+          const kind = c.direction === 'in' ? (res.tone === 'miss' ? 'missed' : 'in') : 'out';
+          const secs = c.talkS ?? c.durationS;
+          return (
+            <div key={c.id}>
+              {head}
+              <button className="ch-row" onClick={() => setOpenId(c.id)}>
+                <span className={`ch-ic ${kind}`}>{Icon.call}</span>
+                <span className="ch-main">
+                  <span className="ch-name">
+                    <b className={kind === 'missed' ? 'missed' : ''}>{c.salon || fmtPhone(other(c)) || 'Unknown number'}</b>
+                    {!c.leadId && <span className="ch-tag grey">no lead</span>}
+                    {!c.logged && <span className="ch-tag warn">needs note</span>}
+                  </span>
+                  <span className="ch-sub">{[c.direction === 'in' ? 'Incoming' : 'Outgoing', res.label, c.repName].filter(Boolean).join(' · ')}</span>
+                </span>
+                <span className="ch-when"><span>{clock(c.at)}</span>{secs ? <small>{fmtSecs(secs)}</small> : null}</span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="ch-foot">Last 14 days · <a onClick={() => { r.setView('reports'); onClose(); }}>Older calls in Reports</a></div>
+    </div>
+  );
+}
+
+function CallDetail({ r, call, onBack, onClose, onSaved, onCallNumber, onTextNumber }: {
+  r: R; call: CallRow; onBack: () => void; onClose: () => void; onSaved: (p: Partial<CallRow>) => void;
+  onCallNumber: (n: string) => void; onTextNumber: (n: string) => void;
+}) {
+  const [outcome, setOutcome] = useState<string | null>(call.outcome);
+  const [note, setNote] = useState(call.note || '');
+  const [cbOn, setCbOn] = useState(false);
+  const [cbAt, setCbAt] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(10, 0, 0, 0); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T10:00`; });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [linkQ, setLinkQ] = useState('');
+  const [saveName, setSaveName] = useState('');
+  const lead = call.leadId ? r.leadById(call.leadId) : undefined;
+  const number = (call.direction === 'in' ? call.from : call.to) || '';
+  const res = callResult(call);
+  const secs = call.talkS ?? call.durationS;
+  const sid = recSid(call.recordingUrl || undefined);
+  const kind = call.direction === 'in' ? (res.tone === 'miss' ? 'missed' : 'in') : 'out';
+  const guess = !call.leadId && number ? r.matchLeadByNumber(number) : undefined;
+  const matches = linkQ.trim().length >= 2
+    ? r.leads.filter((l) => l.salon.toLowerCase().includes(linkQ.toLowerCase())).slice(0, 5) : [];
+
+  const post = async (body: Record<string, unknown>) => {
+    if (!r.enabled) return { ok: true };
+    const res = await fetch('/api/calls', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ callId: call.id, ...body }) });
+    const j = await res.json().catch(() => ({}));
+    return res.ok ? { ok: true } : { ok: false, error: j.error || `Failed (${res.status})` };
+  };
+
+  const link = async (leadId: string) => {
+    setBusy(true); setMsg(null);
+    const out = await post({ action: 'link', leadId });
+    setBusy(false);
+    if (!out.ok) { setMsg(out.error || 'Couldn’t link'); return false; }
+    const l = r.leadById(leadId);
+    onSaved({ leadId, salon: l?.salon || null, city: l?.city || null });
+    return true;
+  };
+  const saveAsLead = async () => {
+    if (!number) return;
+    setBusy(true);
+    const l = await r.saveNumberAsLead(number, saveName);
+    if (!l) { setBusy(false); setMsg('Couldn’t save the lead'); return; }
+    const ok = await link(l.id);
+    if (ok) onClose();
+  };
+
+  const save = async () => {
+    const text = note.trim();
+    if (!text && !outcome) { setMsg('Add a note or pick how it went.'); return; }
+    setBusy(true); setMsg(null);
+    const out = await post({ action: 'note', note: text, outcome });
+    if (!out.ok) { setBusy(false); setMsg(out.error || 'Couldn’t save'); return; }
+    // Only a changed note goes on the lead's timeline (re-saving the same text adds nothing).
+    const changed = text !== (call.note || '') || outcome !== call.outcome;
+    if (call.leadId && changed) {
+      const o = CALL_OUTCOMES.find((x) => x.key === outcome);
+      r.addActivity(call.leadId, {
+        kind: 'note', disposition: o?.dispo, time: 'Just now',
+        ty: `Call note${call.notedAt ? ' (updated)' : ''}${o ? ` · ${o.label}` : ''} · ${dayLabel(call.at)} ${clock(call.at)}`,
+        body: text || `${o?.label} (${call.direction === 'in' ? 'incoming' : 'outgoing'} call)`,
+      });
+    }
+    if (call.leadId && cbOn && cbAt) { const d = new Date(cbAt); if (!isNaN(d.getTime())) r.setCallback(call.leadId, d.toISOString(), text || undefined); }
+    setBusy(false);
+    onSaved({ note: text || null, outcome, notedAt: new Date().toISOString(), logged: true });
+    setMsg('✓ Saved');
+  };
+  const openLead = () => { if (!call.leadId) return; r.setActiveLeadId(call.leadId); r.setView('dialer'); onClose(); };
+
+  return (
+    <div className="ch-wrap">
+      <div className="ch-dhead">
+        <button className="ch-back" onClick={onBack} aria-label="Back to recent calls">‹ Recent</button>
+      </div>
+      <div className="ch-detail">
+        <div className="ch-who">
+          <span className={`ch-ic big ${kind}`}>{Icon.call}</span>
+          <div style={{ minWidth: 0 }}>
+            {call.leadId
+              ? <button className="ch-lead" onClick={openLead} title="Open this lead">{call.salon || lead?.salon || 'Open lead'} <span>→</span></button>
+              : <div className="ch-lead static">{fmtPhone(number) || 'Unknown number'}</div>}
+            <div className="ch-sub">{[call.city || lead?.city, call.leadId ? fmtPhone(number) : 'Not linked to a lead'].filter(Boolean).join(' · ')}</div>
+          </div>
+        </div>
+        <div className="ch-facts">
+          <div><span>When</span><b>{dayLabel(call.at)} {clock(call.at)}</b></div>
+          <div><span>Result</span><b className={res.tone === 'miss' ? 'missed' : ''}>{res.label}</b></div>
+          <div><span>{call.status === 'voicemail' ? 'Voicemail' : 'Talk time'}</span><b>{secs ? fmtSecs(secs) : '—'}</b></div>
+          <div><span>{call.direction === 'in' ? 'Answered by' : 'Called by'}</span><b>{call.repName || '—'}</b></div>
+        </div>
+        {sid && <audio className="ch-audio" controls preload="none" src={`/api/voice/media?sid=${sid}`} />}
+
+        {number && (
+          <div className="ch-actions">
+            <button className="btn sm primary" onClick={() => call.leadId ? (r.startCall(call.leadId), onClose()) : onCallNumber(number)}>{Icon.call} Call {call.direction === 'in' ? 'back' : 'again'}</button>
+            <button className="btn sm" onClick={() => onTextNumber(number)}>{Icon.text} Text</button>
+            {call.leadId && <button className="btn sm" onClick={openLead}>Open lead</button>}
+          </div>
+        )}
+
+        {!call.leadId && (
+          <div className="ch-link">
+            <div className="ch-label">Link this call to a lead</div>
+            {guess && <button className="btn sm" disabled={busy} onClick={() => link(guess.id)}>Link to {guess.salon} (same number)</button>}
+            <input value={linkQ} onChange={(e) => setLinkQ(e.target.value)} placeholder="Search a salon…" aria-label="Search a salon to link" />
+            {matches.map((l) => <button key={l.id} className="ch-match" disabled={busy} onClick={() => link(l.id)}>{l.salon}<span>{l.city}</span></button>)}
+            <div className="ch-save">
+              <input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="Salon name" aria-label="Salon name for a new lead" />
+              <button className="btn sm" disabled={busy || !number} onClick={saveAsLead}>Save as new lead</button>
+            </div>
+          </div>
+        )}
+
+        <div className="ch-label">How did it go?</div>
+        <div className="ch-chips wrap">
+          {CALL_OUTCOMES.map((o) => (
+            <button key={o.key} className={outcome === o.key ? 'on' : ''} onClick={() => { setOutcome(outcome === o.key ? null : o.key); if (o.key === 'callback') setCbOn(true); }}>{o.label}</button>
+          ))}
+        </div>
+        <label className="ch-label" htmlFor={`ch-note-${call.id}`}>Note about this call</label>
+        <textarea id={`ch-note-${call.id}`} className="ch-note" value={note} onChange={(e) => setNote(e.target.value)}
+          placeholder={call.leadId ? 'What happened? Saved to the lead’s activity.' : 'Saved on the call. Link it to a lead to add it to the lead’s activity too.'} />
+        {call.leadId && (
+          <label className="ch-cb">
+            <input type="checkbox" checked={cbOn} onChange={(e) => setCbOn(e.target.checked)} /> Remind me to call back
+            {cbOn && <input type="datetime-local" value={cbAt} onChange={(e) => setCbAt(e.target.value)} />}
+          </label>
+        )}
+        {call.notedAt && !msg && <div className="ch-noted">Last saved {new Date(call.notedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</div>}
+      </div>
+      <div className="ch-dfoot">
+        {msg && <span className={`lc-flash ${msg.startsWith('✓') ? 'ok' : 'bad'}`}>{msg}</span>}
+        <span className="grow" />
+        <button className="btn sm primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save note'}</button>
+      </div>
+    </div>
+  );
+}
+
 function FloatingDialer({ r }: { r: R }) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'keypad' | 'recent'>('keypad');
   const [num, setNum] = useState('');
   const [mode, setMode] = useState<'idle' | 'calling' | 'text'>('idle');
   const [status, setStatus] = useState('');
@@ -3008,8 +3295,20 @@ function FloatingDialer({ r }: { r: R }) {
   return (
     <>
       {open && (
-        <div className="fdial-pop">
-          <div className="fdial-ph"><span>{Icon.call} Quick dial</span><button className="fdial-x" onClick={close}>×</button></div>
+        <div className={`fdial-pop${tab === 'recent' && mode !== 'calling' ? ' wide' : ''}`}>
+          <div className="fdial-ph"><span>{Icon.call} Phone</span><button className="fdial-x" onClick={close} aria-label="Close">×</button></div>
+          {mode !== 'calling' && (
+            <div className="fdial-tabs" role="tablist">
+              <button role="tab" aria-selected={tab === 'keypad'} className={tab === 'keypad' ? 'on' : ''} onClick={() => setTab('keypad')}>Keypad</button>
+              <button role="tab" aria-selected={tab === 'recent'} className={tab === 'recent' ? 'on' : ''} onClick={() => setTab('recent')}>Recent</button>
+            </div>
+          )}
+          {tab === 'recent' && mode !== 'calling' ? (
+            <CallHistory r={r}
+              onCallNumber={(n) => { setNum(n.replace(/[^0-9+]/g, '')); setTab('keypad'); }}
+              onTextNumber={(n) => { const clean = n.replace(/[^0-9+]/g, ''); setNum(clean); const m = r.matchLeadByNumber(clean); setBody(m?.contact ? renderTemplate(DEFAULT_SMS, m, r.me?.signName) : ''); setMode('text'); setTab('keypad'); }}
+              onClose={() => { setOpen(false); setTab('keypad'); }} />
+          ) : (
           <div className="fdial-kp">
             <div className="kp-display">
               <input className="kp-num" value={num} onChange={(e) => setNum(e.target.value.replace(/[^0-9+*#]/g, '').slice(0, 18))} placeholder="Enter a number" />
@@ -3060,9 +3359,10 @@ function FloatingDialer({ r }: { r: R }) {
               </>
             )}
           </div>
+          )}
         </div>
       )}
-      <button className={`fdial-fab ${open ? 'on' : ''}`} onClick={() => (open ? close() : setOpen(true))} title="Dial a number" aria-label="Dial a number">
+      <button className={`fdial-fab ${open ? 'on' : ''}`} onClick={() => (open ? close() : setOpen(true))} title="Keypad and recent calls" aria-label="Keypad and recent calls">
         {open ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
           : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="7" cy="6" r="1.3" /><circle cx="12" cy="6" r="1.3" /><circle cx="17" cy="6" r="1.3" /><circle cx="7" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="17" cy="12" r="1.3" /><circle cx="7" cy="18" r="1.3" /><circle cx="12" cy="18" r="1.3" /><circle cx="17" cy="18" r="1.3" /></svg>}
       </button>

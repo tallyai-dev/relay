@@ -57,3 +57,24 @@ export async function stampLastRep(leadId: string, repId: string) {
 export function twimlResponse(xml: string) {
   return new Response(xml, { headers: { 'Content-Type': 'text/xml' } });
 }
+
+/** Record (or update) a call in the calls table, keyed on the Twilio CallSid.
+ * Best-effort: a database hiccup must never break the TwiML a caller is waiting on. */
+export async function recordCall(row: Record<string, unknown> & { twilio_sid: string }) {
+  const db = supabaseAdmin();
+  if (!db || !row.twilio_sid) return;
+  try {
+    const { error } = await db.from('calls').upsert(row, { onConflict: 'twilio_sid' });
+    if (error) console.error('recordCall', error.message);
+  } catch (e) { console.error('recordCall', e); }
+}
+
+/** Patch an existing call-history row by CallSid (never creates one). */
+export async function updateCall(sid: string, patch: Record<string, unknown>) {
+  const db = supabaseAdmin();
+  if (!db || !sid) return;
+  try {
+    const { error } = await db.from('calls').update(patch).eq('twilio_sid', sid);
+    if (error) console.error('updateCall', error.message);
+  } catch (e) { console.error('updateCall', e); }
+}

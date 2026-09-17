@@ -1,6 +1,6 @@
 import twilio from 'twilio';
 import { supabaseAdmin } from '@/lib/supabase';
-import { leadByPhone, twimlResponse } from '@/lib/voice-server';
+import { leadByPhone, twimlResponse, updateCall } from '@/lib/voice-server';
 
 // POST /api/voice/voicemail?leadId=  — Relay voicemail landed (nobody picked
 // up the callback). Logs it on the lead's timeline as an inbound call with the
@@ -16,6 +16,11 @@ export async function POST(req: Request) {
   const duration = parseInt(String(form.get('RecordingDuration') || '0'), 10) || null;
   const from = String(form.get('From') || '');
 
+  const callSid = String(form.get('CallSid') || '');
+  if (callSid && recordingUrl) {
+    await updateCall(callSid, { status: 'voicemail', recording_url: recordingUrl });
+    await updateCall(callSid, { talk_s: duration }); // separate: needs migration 0017
+  }
   const db = supabaseAdmin();
   if (db && recordingUrl) {
     if (!leadId && from) leadId = (await leadByPhone(from))?.id || '';

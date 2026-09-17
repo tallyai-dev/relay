@@ -1,6 +1,6 @@
 import twilio from 'twilio';
 import { supabaseAdmin } from '@/lib/supabase';
-import { stampLastRep } from '@/lib/voice-server';
+import { stampLastRep, recordCall } from '@/lib/voice-server';
 
 // POST /api/voice/outbound  — TwiML App Voice URL.
 // When the browser SDK places a call it hits this; we return TwiML that dials
@@ -36,6 +36,16 @@ export async function POST(req: Request) {
   const disclosure = (process.env.RECORDING_DISCLOSURE || '').trim();
   // Her callback should ring whoever dialed her — remember it.
   if (leadId && repId) await stampLastRep(leadId, repId);
+  const callSid = String(form.get('CallSid') || '');
+  // Call history: one row per in-app call (the bridge route writes its own).
+  if (callSid && to && callerId) {
+    await recordCall({
+      twilio_sid: callSid, direction: 'out', status: 'in-progress',
+      lead_id: /^[0-9a-f-]{36}$/i.test(leadId) ? leadId : null,
+      rep_id: /^[0-9a-f-]{36}$/i.test(repId) ? repId : null,
+      from_number: callerId, to_number: to,
+    });
+  }
 
   const twiml = new twilio.twiml.VoiceResponse();
   if (to && callerId) {
@@ -46,6 +56,8 @@ export async function POST(req: Request) {
       // answerOnBridge keeps the browser leg unanswered until she picks up, so
       // Twilio sends no ringback — src/lib/voice.ts plays one locally.
       answerOnBridge: true,
+      action: `${BASE}/api/voice/call-status`, // what happened on her side → call history
+      method: 'POST',
       record: 'record-from-answer-dual',
       recordingStatusCallback: recCb,
       recordingStatusCallbackEvent: ['completed'],

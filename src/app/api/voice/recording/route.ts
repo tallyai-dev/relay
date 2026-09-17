@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase';
+import { updateCall } from '@/lib/voice-server';
 
 // POST /api/voice/recording?leadId=...  — Twilio recording status callback.
 // Fires when a call recording is ready. We fetch the audio, transcribe it
@@ -71,6 +72,10 @@ export async function POST(req: Request) {
   const recordingUrl = String(form.get('RecordingUrl') || '');
   const durationS = parseInt(String(form.get('RecordingDuration') || '0'), 10) || null;
   const status = String(form.get('RecordingStatus') || 'completed');
+
+  // Call history keeps a pointer to the audio even when no lead is attached.
+  const callSid = String(form.get('CallSid') || '');
+  if (callSid && recordingUrl && status === 'completed') await updateCall(callSid, { recording_url: recordingUrl });
 
   const db = supabaseAdmin();
   // Nothing to attach to (no DB, unknown lead, no audio, or not finished) — the

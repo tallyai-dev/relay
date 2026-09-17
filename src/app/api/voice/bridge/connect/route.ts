@@ -44,6 +44,8 @@ export async function POST(req: Request) {
     callerId,
     ringTone: 'us',
     timeout: 30,
+    action: `${BASE}/api/voice/call-status`, // her side's result → call history
+    method: 'POST',
     record: 'record-from-answer-dual',
     recordingStatusCallback: recCb,
     recordingStatusCallbackEvent: ['completed'],
