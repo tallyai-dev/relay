@@ -993,6 +993,9 @@ function TeamView({ r, onViewActivity }: { r: R; onViewActivity: (repId: string)
               <label className="team-num" title="The phone Relay rings for the cell bridge and for callbacks">Cell
                 <input defaultValue={rp.forwardTo || ''} placeholder="+1 your cell" onBlur={(e) => { const v = e.target.value.trim(); if (v !== (rp.forwardTo || '')) r.updateRep(rp.id, { forwardTo: v }); }} />
               </label>
+              <label className="team-num" title="Optional name templates sign with. Blank = texts and emails speak as Tally.">Sign as
+                <input defaultValue={rp.signName || ''} placeholder="No name" maxLength={30} onBlur={(e) => { const v = e.target.value.trim(); if (v !== (rp.signName || '')) r.updateRep(rp.id, { signName: v }); }} />
+              </label>
               <label className="team-num" title="Bridge = Call rings your cell first, then dials her. App = the in-browser dialer.">Call via
                 <select defaultValue={rp.callMode || 'bridge'} onChange={(e) => r.updateRep(rp.id, { callMode: e.target.value as 'bridge' | 'app' })}>
                   <option value="bridge">My cell (bridge)</option>
@@ -1368,18 +1371,20 @@ function LeadEnrich({ r, lead }: { r: R; lead: Lead }) {
 // follow-up goes out from their real inbox, threads naturally, and lands in
 // their Sent folder. Nothing is sent from Relay — the rep reviews and hits send
 // themselves. Best deliverability, zero setup, right fit for warm/opt-in sends.
-const EMAIL_SIGNOFF = 'Seth\nTally AI';
+// Sign-off for the older one-click emails: the rep's optional "Sign as" name,
+// else the team.
+const emailSignoff = (signName?: string) => (signName?.trim() ? `${signName.trim()}\nTally AI` : 'The Tally AI team');
 function firstName(lead: Lead): string {
   const n = lead.contact?.name;
   return n && n !== '—' ? n.split(' ')[0] : 'there';
 }
-type EmailTemplate = { key: string; label: string; subject: (l: Lead) => string; body: (l: Lead) => string };
+type EmailTemplate = { key: string; label: string; subject: (l: Lead) => string; body: (l: Lead, s: string) => string };
 const EMAIL_TEMPLATES: EmailTemplate[] = [
   {
     key: 'missed',
     label: 'Missed you (no connect)',
     subject: (l) => `Sorry I missed you — quick idea for ${l.salon}`,
-    body: (l) => `Hi ${firstName(l)},
+    body: (l, s) => `Hi ${firstName(l)},
 
 Tried giving ${l.salon} a call and just missed you — no worries.
 
@@ -1389,13 +1394,13 @@ Want me to show you how it'd work for ${l.salon}? Grab 15 minutes here:
 ${CALENDLY_URL}
 
 Thanks,
-${EMAIL_SIGNOFF}`,
+${s}`,
   },
   {
     key: 'referral',
     label: 'Stylist referral (email owner)',
     subject: (l) => `A quick idea for ${l.salon}`,
-    body: (l) => `Hi there,
+    body: (l, s) => `Hi there,
 
 I spoke with someone on your team at ${l.salon} and they suggested I reach out to you directly.
 
@@ -1405,13 +1410,13 @@ Worth a quick look? Grab 15 minutes here and I'll show you how it'd work for ${l
 ${CALENDLY_URL}
 
 Thanks,
-${EMAIL_SIGNOFF}`,
+${s}`,
   },
   {
     key: 'info',
     label: 'Info & pricing',
     subject: (l) => `Tally AI for ${l.salon}`,
-    body: (l) => `Hi ${firstName(l)},
+    body: (l, s) => `Hi ${firstName(l)},
 
 Great chatting just now — here's the quick rundown on what we talked about.
 
@@ -1420,26 +1425,26 @@ Tally sets up an AI receptionist for ${l.salon} that answers your missed and aft
 Happy to get you set up whenever you're ready — just reply here.
 
 Thanks,
-${EMAIL_SIGNOFF}`,
+${s}`,
   },
   {
     key: 'nice',
     label: 'Nice talking to you',
     subject: () => 'Following up',
-    body: (l) => `Hi ${firstName(l)},
+    body: (l, s) => `Hi ${firstName(l)},
 
 Really enjoyed talking with you today — wanted to get my info in your inbox so it's easy to find me.
 
 Whenever you want to get ${l.salon} set up with the AI receptionist, just reply here and I'll take care of the rest.
 
 Thanks,
-${EMAIL_SIGNOFF}`,
+${s}`,
   },
   {
     key: 'recap',
     label: 'Recap of our call',
     subject: () => 'Quick recap from our call',
-    body: (l) => `Hi ${firstName(l)},
+    body: (l, s) => `Hi ${firstName(l)},
 
 Quick recap of what we covered:
 
@@ -1450,7 +1455,7 @@ Quick recap of what we covered:
 I'll follow up soon, but reply anytime if you want to move forward.
 
 Thanks,
-${EMAIL_SIGNOFF}`,
+${s}`,
   },
 ];
 
@@ -1493,6 +1498,11 @@ function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { 
       <div className="modal tpl-modal" style={{ maxWidth: 560 }}>
         <div className="mh"><h3>Templates · {lead.salon}</h3>{r.isAdmin && <button className="btn sm" style={{ marginLeft: 'auto', marginRight: 8 }} onClick={() => { onClose(); r.setView('templates'); }}>Edit templates</button>}<button className="x" onClick={onClose}>×</button></div>
         <div className="mb tpl-body">
+          <label className="tpl-sign" title="Optional. Leave blank and texts and emails speak as Tally.">
+            <span>Sign as</span>
+            <input key={r.me?.id || 'me'} defaultValue={r.me?.signName || ''} placeholder="No name — sends as Tally" maxLength={30}
+              onBlur={(e) => { const v = e.target.value.trim(); if (r.me && v !== (r.me.signName || '')) r.updateRep(r.me.id, { signName: v }); }} />
+          </label>
           <div className="tpl-tabs">
             <button className={tab === 'text' ? 'on' : ''} onClick={() => setTab('text')}>Texts</button>
             <button className={tab === 'email' ? 'on' : ''} onClick={() => setTab('email')}>Emails</button>
@@ -1595,10 +1605,10 @@ function BookDemo({ lead }: { lead: Lead }) {
 // into the Inbox; replies sync back. "Open in Gmail" is kept as a fallback.
 function EmailComposer({ r, lead, onClose, initial }: { r: R; lead: Lead; onClose: () => void; initial?: { subject: string; body: string } }) {
   const [subject, setSubject] = useState(initial?.subject ?? EMAIL_TEMPLATES[0].subject(lead));
-  const [body, setBody] = useState(initial?.body ?? EMAIL_TEMPLATES[0].body(lead));
+  const [body, setBody] = useState(initial?.body ?? EMAIL_TEMPLATES[0].body(lead, emailSignoff(r.me?.signName)));
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const apply = (t: EmailTemplate) => { setSubject(t.subject(lead)); setBody(t.body(lead)); };
+  const apply = (t: EmailTemplate) => { setSubject(t.subject(lead)); setBody(t.body(lead, emailSignoff(r.me?.signName))); };
   const ctx = { lead, me: r.me, calendly: CALENDLY_URL };
   const applyLib = (t: { subject: string; body: string }) => { setSubject(renderTpl(t.subject, ctx)); setBody(renderTpl(t.body, ctx)); };
   const send = async () => {
@@ -2138,7 +2148,7 @@ function FlowBar({ r, lead }: { r: R; lead: Lead }) {
 function ComposeText({ r, lead, fallbackFromDm }: { r: R; lead: Lead; fallbackFromDm?: boolean }) {
   const cad = r.cadenceById(lead.cadenceId);
   const tpl0 = cad?.steps.find((s) => (s.channel === 'text' || (fallbackFromDm && s.channel === 'dm')) && s.template)?.template || DEFAULT_SMS;
-  const [body, setBody] = useState(renderTemplate(tpl0, lead));
+  const [body, setBody] = useState(renderTemplate(tpl0, lead, r.me?.signName));
   const [tpl, setTpl] = useState(false);
   return (
     <div className="flowbar text compose">
@@ -2155,7 +2165,7 @@ function ComposeText({ r, lead, fallbackFromDm }: { r: R; lead: Lead; fallbackFr
 function ComposeDm({ r, lead }: { r: R; lead: Lead }) {
   const cad = r.cadenceById(lead.cadenceId);
   const tpl = cad?.steps.find((s) => s.channel === 'dm' && s.template)?.template || IG_DM;
-  const [body, setBody] = useState(renderTemplate(tpl, lead));
+  const [body, setBody] = useState(renderTemplate(tpl, lead, r.me?.signName));
   const left = lead.lastSocialAt ? Math.max(0, 24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime())) : 0;
   const hrs = Math.floor(left / 3600_000);
   return (
@@ -2312,8 +2322,8 @@ function LeadContextCards({ r, lead }: { r: R; lead: Lead }) {
 function ComposeEmail({ r, lead }: { r: R; lead: Lead }) {
   const cad = r.cadenceById(lead.cadenceId);
   const estep = cad?.steps.find((s) => s.channel === 'email' && (s.template || s.subject));
-  const [subj, setSubj] = useState(renderTemplate(estep?.subject || DEFAULT_EMAIL_SUBJECT, lead));
-  const [body, setBody] = useState(renderTemplate(estep?.template || DEFAULT_EMAIL_BODY, lead));
+  const [subj, setSubj] = useState(renderTemplate(estep?.subject || DEFAULT_EMAIL_SUBJECT, lead, r.me?.signName));
+  const [body, setBody] = useState(renderTemplate(estep?.template || DEFAULT_EMAIL_BODY, lead, r.me?.signName));
   return (
     <div className="flowbar email compose">
       <div className="compose-head"><span className="fb-badge">{Icon.email} Email · Action {r.flow.actionCount + 1}</span>
@@ -2363,7 +2373,7 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
     const outScript = [
       { sp: 'you', msg: 'Hey, what time do you guys close?' },
       { sp: 'them', msg: "Uh, about 8. Who's this?" },
-      { sp: 'you', msg: `Seth — quick one. If someone calls ${lead.salon} after 8, does it just go to voicemail?` },
+      { sp: 'you', msg: `Hi — quick one. If someone calls ${lead.salon} after 8, does it just go to voicemail?` },
       { sp: 'them', msg: 'Yeah, pretty much. We catch it in the morning.' },
       { sp: 'you', msg: 'Gotcha. We set salons up with an AI receptionist that answers those and books them. Are you the owner?' },
       { sp: 'them', msg: `I am, yeah. ${them}.` },
@@ -2696,7 +2706,7 @@ function Keypad({ r }: { r: R }) {
     }
   };
 
-  const openText = () => { setBody(match?.contact ? renderTemplate(DEFAULT_SMS, match) : ''); setMode('text'); };
+  const openText = () => { setBody(match?.contact ? renderTemplate(DEFAULT_SMS, match, r.me?.signName) : ''); setMode('text'); };
   const sendText = () => { if (!body.trim()) return; r.sendKeypadText(num, body.trim()); setMode('idle'); setBody(''); };
 
   const doSave = async () => { await r.saveNumberAsLead(num, saveName); setSaveOpen(false); setSaveName(''); };
@@ -2819,7 +2829,7 @@ function FloatingDialer({ r }: { r: R }) {
       c.on('error', (e: any) => { console.error(e); setStatus('Call error'); });
     } else { setStatus('Voice not configured'); setTimeout(() => endCall(), 1200); }
   };
-  const openText = () => { setBody(match?.contact ? renderTemplate(DEFAULT_SMS, match) : ''); setMode('text'); };
+  const openText = () => { setBody(match?.contact ? renderTemplate(DEFAULT_SMS, match, r.me?.signName) : ''); setMode('text'); };
   const sendText = () => { if (!body.trim()) return; r.sendKeypadText(num, body.trim()); setMode('idle'); setBody(''); setNum(''); };
   const doSave = async () => { await r.saveNumberAsLead(num, saveName); setSaveOpen(false); setSaveName(''); setOpen(false); };
   const close = () => { if (mode === 'calling') return; setOpen(false); setMode('idle'); };

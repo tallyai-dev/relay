@@ -1358,6 +1358,8 @@ tr.row-sel td{background:var(--accent-soft,#e6efff)}
 }
 /* Templates sheet (prospecting texts + emails) */
 .tpl-body{display:flex;flex-direction:column;gap:10px}
+.tpl-sign{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--ink2)}
+.tpl-sign input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:13px;font-family:inherit;background:#fff}
 .tpl-tabs{display:flex;gap:6px;background:var(--line2);border-radius:12px;padding:3px}
 .tpl-tabs button{flex:1;border:none;background:transparent;border-radius:9px;padding:8px 6px;font-size:12px;font-weight:700;color:var(--ink2);font-family:inherit;cursor:pointer}
 .tpl-tabs button.on{background:#fff;color:var(--ink);box-shadow:var(--shadow)}

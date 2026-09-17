@@ -12,6 +12,7 @@ export interface Rep {
   phoneNumber?: string; // their assigned outbound Twilio number (caller ID)
   forwardTo?: string;   // their CELL (E.164) — the cell bridge rings it, callbacks ring it
   callMode?: 'bridge' | 'app'; // how Call behaves for this rep (bridge = ring my cell first)
+  signName?: string;    // optional name templates sign with; blank = messages speak as Tally
   active?: boolean;     // deactivated reps can't be assigned new work
   leadCount?: number;   // owned leads, filled on the Team screen
 }

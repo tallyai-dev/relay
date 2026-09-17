@@ -296,9 +296,9 @@ export async function handlePostCall(data: any): Promise<{ ok: boolean; outcome?
       const tpl = withOverrides(TEXT_TEMPLATES, 'text', await loadTemplateOverrides()).find((t) => t.key === textKey);
       let me: any = null;
       const repId = call.rep_id || lead.owner_rep_id || lead.last_rep_id || null;
-      if (repId) ({ data: me } = await db.from('reps').select('id, name, forward_to, phone_number').eq('id', repId).maybeSingle());
+      if (repId) ({ data: me } = await db.from('reps').select('id, name, forward_to, phone_number, sign_name').eq('id', repId).maybeSingle());
       if (tpl) {
-        const body = renderTpl(tpl.body, { lead: toLead({ ...lead, contacts: cp.name ? [{ ...(lead.contacts?.[0] || {}), name: cp.name, is_primary: true }] : lead.contacts }), me: me ? { id: me.id, name: me.name, role: 'rep', forwardTo: me.forward_to, phoneNumber: me.phone_number } : null });
+        const body = renderTpl(tpl.body, { lead: toLead({ ...lead, contacts: cp.name ? [{ ...(lead.contacts?.[0] || {}), name: cp.name, is_primary: true }] : lead.contacts }), me: me ? { id: me.id, name: me.name, role: 'rep', forwardTo: me.forward_to, phoneNumber: me.phone_number, signName: me.sign_name || undefined } : null });
         const sent = await sendSmsServer({ to: lead.phone, body, leadId: lead.id, repId: null });
         if (sent.ok) await db.from('activities').insert({ lead_id: lead.id, kind: 'text', direction: 'out', body });
         else console.error('agent post-call text failed', sent.error);

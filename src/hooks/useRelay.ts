@@ -963,8 +963,9 @@ export function useRelay() {
   }, [enabled]);
 
   // Edit a rep (number, role, active, name) with optimistic local update.
-  const updateRep = useCallback((repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean; forwardTo?: string; callMode?: 'bridge' | 'app' }) => {
+  const updateRep = useCallback((repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean; forwardTo?: string; callMode?: 'bridge' | 'app'; signName?: string }) => {
     setReps((prev) => prev.map((rp) => (rp.id === repId ? { ...rp, ...patch } : rp)));
+    setMe((m) => (m && m.id === repId ? { ...m, ...patch } : m));
     if (enabled) updateRepRepo(repId, patch);
   }, [enabled]);
 

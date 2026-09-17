@@ -81,6 +81,24 @@ export const EMAIL_TEMPLATES_LIB: EmailTpl[] = [
     body: "Hi{first_name} — no pitch, one useful thing.\n\n{nurture_item}\n\nIf missed calls ever move up the list at {salon}, I'm a reply away.\n\n{rep} · Tally" },
 ];
 
+// The rep's name is optional ("Sign as" on the lead's Templates sheet / Team).
+// Blank = the message speaks as Tally, so every {rep} phrase is rewritten to
+// read naturally without a person's name. Runs before the other tokens, and on
+// admin overrides too, so an edited template degrades the same way.
+export function fillRep(tpl: string, signName?: string | null): string {
+  const n = (signName || '').trim();
+  if (n) return tpl.replace(/\{rep\}/g, n);
+  return tpl
+    .replace(/[—–-]\s*\{rep\},\s*Tally\b/g, '— Tally')
+    .replace(/\{rep\}\s*·\s*Tally\b/g, 'The Tally team')
+    .replace(/It['’]s \{rep\} (?:from|with) Tally/g, "It's Tally")
+    .replace(/\{rep\} again (?:from|with) Tally/g, 'Tally again')
+    .replace(/\{rep\} (?:from|with) Tally again/g, 'Tally again')
+    .replace(/\{rep\} (?:from|with) Tally/g, 'this is Tally')
+    .replace(/\{rep\} here/g, 'this is Tally')
+    .replace(/\{rep\}/g, 'the Tally team');
+}
+
 export interface TplContext {
   lead: Lead;
   me?: Rep | null;
@@ -105,7 +123,8 @@ const fmtCell = (p?: string) => {
 export function renderTpl(tpl: string, ctx: TplContext): string {
   const { lead, me } = ctx;
   const first = lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name.split(' ')[0] : '';
-  const rep = me?.name ? me.name.split(' ')[0].replace(/[^A-Za-z'-].*$/, '') : 'Seth';
+  const rep = (me?.signName || '').trim();
+  tpl = fillRep(tpl, rep);
   const v: Record<string, string> = {
     first_name: first ? ` ${first}` : '',
     salon: lead.salon,
@@ -158,7 +177,7 @@ export function withOverrides<T extends { key: string; body: string; subject?: s
 export const TPL_TOKENS: { token: string; means: string }[] = [
   { token: '{first_name}', means: "her first name, with its own leading space (blank when unknown — 'Hi{first_name},' reads fine either way)" },
   { token: '{salon}', means: 'salon name' },
-  { token: '{rep}', means: "the sending rep's first name" },
+  { token: '{rep}', means: "the sender's \"Sign as\" name — optional; when blank, the phrase reads as Tally (\"{rep} with Tally\" → \"this is Tally\")" },
   { token: '{rep_cell}', means: "the rep's cell, formatted" },
   { token: '{demo_line}', means: `the Luna & Main demo line (${DEMO_LINE})` },
   { token: '{link}', means: `the demo link (${DEMO_LINK})` },

@@ -1,4 +1,5 @@
 import type { Cadence, CadenceStep, Lead, Stage, Channel, Disposition, DispositionKey, BranchAction, Branches } from './types';
+import { fillRep, DEMO_LINK } from './templates';
 
 /**
  * The cadence engine — the brain behind Flow Mode.
@@ -72,19 +73,21 @@ export function resolveOutcome(disposition: Disposition): AdvanceResult {
 }
 
 /** Merge {salon} and {first_name} into a template. */
-export function renderTemplate(tpl: string, lead: Lead): string {
+export function renderTemplate(tpl: string, lead: Lead, signName?: string | null): string {
+  tpl = fillRep(tpl, signName);
   const first =
     lead.contact?.name && lead.contact.name !== '—'
       ? lead.contact.name.split(' ')[0]
       : '';
   return tpl
     .replaceAll('{salon}', lead.salon)
+    .replaceAll('{demo_link}', DEMO_LINK)
     .replaceAll('{first_name}', first ? ` ${first}` : '')
     .replace(/\s+—/, ' —');
 }
 
 export const DEFAULT_SMS =
-  'Hi{first_name} — Seth here. Quick idea for {salon}: an AI receptionist that answers your missed & after-hours calls so you stop losing bookings. Worth a 2-min look?';
+  'Hi{first_name} — {rep} here. Quick idea for {salon}: an AI receptionist that answers your missed & after-hours calls so you stop losing bookings. Worth a 2-min look?';
 
 export const DEFAULT_EMAIL_SUBJECT = '{salon}: stop losing after-hours bookings';
 export const DEFAULT_EMAIL_BODY =
@@ -95,7 +98,7 @@ export const DEFAULT_EMAIL_BODY =
 // 0012) so imports can drop leads straight onto it. Text-first, DM-referencing.
 export const INSTAGRAM_CADENCE_ID = '22222222-2222-2222-2222-222222222222';
 export const IG_SMS =
-  'Hi{first_name}! It\'s Seth from Tally — thanks for the DM about {salon}. Here\'s that 2-min demo I mentioned: {demo_link}. Want me to give you a quick call today?';
+  'Hi{first_name}! It\'s {rep} from Tally — thanks for the DM about {salon}. Here\'s that 2-min demo I mentioned: {demo_link}. Want me to give you a quick call today?';
 export const IG_DM =
   'Hi{first_name}! Thanks for reaching out about {salon}. Here\'s the 2-min demo: {demo_link} — want me to text it to you, or is a quick call easier? What\'s the best number?';
 export const IG_EMAIL_SUBJECT = '{salon}: the AI receptionist demo you asked about';

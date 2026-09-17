@@ -8,7 +8,7 @@ on conflict do nothing;
 insert into cadence_steps (cadence_id, position, channel, wait_minutes, template, subject) values
   ('11111111-1111-1111-1111-111111111111', 0, 'call',  0,   null, null),
   ('11111111-1111-1111-1111-111111111111', 1, 'call',  0,   null, null),
-  ('11111111-1111-1111-1111-111111111111', 2, 'text',  0,   'Hi {first_name} — Seth here. Quick idea for {salon}: an AI receptionist that answers your missed & after-hours calls so you stop losing bookings. Worth a 2-min look?', null),
+  ('11111111-1111-1111-1111-111111111111', 2, 'text',  0,   'Hi{first_name} — {rep} here. Quick idea for {salon}: an AI receptionist that answers your missed & after-hours calls so you stop losing bookings. Worth a 2-min look?', null),
   ('11111111-1111-1111-1111-111111111111', 3, 'email', 1440,'Hi {first_name} — noticed {salon} probably misses calls after you close. We set salons up with a 24/7 AI receptionist that answers and books them. 60-second demo inside — worth a look?', '{salon}: stop losing after-hours bookings')
 on conflict do nothing;
 

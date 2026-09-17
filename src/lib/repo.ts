@@ -17,16 +17,16 @@ export async function fetchMe(): Promise<Rep | null> {
   const { data: u } = await sb.auth.getUser();
   const uid = u.user?.id;
   if (!uid) return null;
-  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active,forward_to,call_mode').eq('auth_user_id', uid).maybeSingle();
-  return data ? { id: data.id, name: data.name, email: data.email, role: data.role, phoneNumber: data.phone_number || undefined, active: data.active ?? true, forwardTo: data.forward_to || undefined, callMode: data.call_mode || 'bridge' } : null;
+  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active,forward_to,call_mode,sign_name').eq('auth_user_id', uid).maybeSingle();
+  return data ? { id: data.id, name: data.name, email: data.email, role: data.role, phoneNumber: data.phone_number || undefined, active: data.active ?? true, forwardTo: data.forward_to || undefined, callMode: data.call_mode || 'bridge', signName: data.sign_name || undefined } : null;
 }
 
 // Reps visible to the current user (admins see all; reps see themselves).
 export async function fetchReps(): Promise<Rep[]> {
   const sb = supabaseBrowser();
   if (!sb) return [];
-  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active,forward_to,call_mode').order('name');
-  return (data || []).map((r: any) => ({ id: r.id, name: r.name, email: r.email, role: r.role, phoneNumber: r.phone_number || undefined, active: r.active ?? true, forwardTo: r.forward_to || undefined, callMode: r.call_mode || 'bridge' }));
+  const { data } = await sb.from('reps').select('id,name,email,role,phone_number,active,forward_to,call_mode,sign_name').order('name');
+  return (data || []).map((r: any) => ({ id: r.id, name: r.name, email: r.email, role: r.role, phoneNumber: r.phone_number || undefined, active: r.active ?? true, forwardTo: r.forward_to || undefined, callMode: r.call_mode || 'bridge', signName: r.sign_name || undefined }));
 }
 
 // How many leads each rep owns (admin Team screen). One grouped read.
@@ -46,7 +46,7 @@ export async function fetchRepLeadCounts(): Promise<Record<string, number>> {
 
 // Admin edits to a rep row (number, role, active, name). Allowed by the reps
 // RLS update policy for admins; no server endpoint needed.
-export async function updateRep(repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean; forwardTo?: string; callMode?: 'bridge' | 'app' }): Promise<void> {
+export async function updateRep(repId: string, patch: { name?: string; role?: 'admin' | 'rep'; phoneNumber?: string; active?: boolean; forwardTo?: string; callMode?: 'bridge' | 'app'; signName?: string }): Promise<void> {
   const sb = supabaseBrowser();
   if (!sb) return;
   const row: any = {};
@@ -56,6 +56,7 @@ export async function updateRep(repId: string, patch: { name?: string; role?: 'a
   if (patch.active !== undefined) row.active = patch.active;
   if (patch.forwardTo !== undefined) row.forward_to = patch.forwardTo ? (toE164(patch.forwardTo) ?? patch.forwardTo) : null;
   if (patch.callMode !== undefined) row.call_mode = patch.callMode;
+  if (patch.signName !== undefined) row.sign_name = patch.signName.trim() || null;
   const { error } = await sb.from('reps').update(row).eq('id', repId);
   if (error) console.error('updateRep', error);
 }
