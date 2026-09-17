@@ -532,8 +532,20 @@ export function useRelay() {
     } catch { return { ok: false, error: 'Network error — the call was not placed.' }; }
   }, []);
   // Does Call ring my cell (bridge) or the in-app dialer? Bridge is the default
-  // for anyone with a cell on file; the Team screen flips it per rep.
-  const useBridge = !!me?.forwardTo && me?.callMode !== 'app';
+  // for anyone with a cell on file; the Team screen sets it per rep, and each
+  // device can override it (laptop = this computer, phone = my cell) — kept in
+  // localStorage so it's per browser and survives reloads.
+  const [deviceCallMode, setDeviceCallModeState] = useState<'bridge' | 'app' | null>(null);
+  useEffect(() => {
+    try { const v = localStorage.getItem('relay.callMode'); if (v === 'bridge' || v === 'app') setDeviceCallModeState(v); } catch { /* storage blocked */ }
+  }, []);
+  const setDeviceCallMode = useCallback((m: 'bridge' | 'app') => {
+    setDeviceCallModeState(m);
+    try { localStorage.setItem('relay.callMode', m); } catch { /* storage blocked */ }
+  }, []);
+  const callMode: 'bridge' | 'app' = deviceCallMode || me?.callMode || 'bridge';
+  const canBridge = !!me?.forwardTo;
+  const useBridge = canBridge && callMode !== 'app';
 
   // Called by the live CallPanel's "End & log" (both outbound-flow and inbound).
   const endCall = useCallback(() => {
@@ -1252,7 +1264,7 @@ export function useRelay() {
     startFlow, exitFlow, endCall, flowCall, flowSend, flowDispo, flowConnected, saveNote, skipNote, flowSkip, workLeadNow, sendLeadEmail,
     addActivity, setStage,
     messages, activeThreadLead, unreadCount, openThread, closeThread, sendReply, sendThreadReply, retrySend, threadKeyForMessage,
-    activeCall, startCall, bridgeCall, useBridge, inbound, ringInbound, simInbound, answerInbound, declineInbound,
+    activeCall, startCall, bridgeCall, useBridge, canBridge, setDeviceCallMode, inbound, ringInbound, simInbound, answerInbound, declineInbound,
     sendLeadDm, setCallback, confirmFlowCallback, cancelFlowCallback, callbackLeads,
     shareIntent, clearShareIntent, pendingCallLead, clearPendingCall,
     cadences, cadenceById, newCadence, saveCadence, removeCadence, assignCadence, assignCadenceMany, moveCadenceLeads,

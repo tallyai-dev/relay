@@ -2219,8 +2219,8 @@ function ChannelRow({ r, lead }: { r: R; lead: Lead }) {
   return (
     <div className="chrow-wrap">
       <div className="chrow">
-        <button className="chb pri" disabled={!lead.phone} onClick={() => r.startCall(lead.id)} title={bridge ? 'Relay rings your cell, then dials her from the Relay number' : 'Call from the in-app dialer'}>
-          {Icon.call}<span>Call</span><small>{lead.phone ? (bridge ? 'rings my cell' : 'in-app') : 'no phone'}</small>
+        <button className="chb pri" disabled={!lead.phone} onClick={() => r.startCall(lead.id)} title={bridge ? 'Relay rings your cell, then dials her from the Relay number' : 'Call from this computer (mic + speakers), from the Relay number'}>
+          {Icon.call}<span>Call</span><small>{lead.phone ? (bridge ? 'rings my cell' : 'this computer') : 'no phone'}</small>
         </button>
         <button className={`chb ig ${canDm ? '' : 'off'}`} onClick={() => { if (canDm) { setDm((v) => !v); setDmMsg(null); } }} title={canDm ? 'Instagram DM' : lead.igUserId ? 'Her 24-hour DM window is closed — text her' : 'No Instagram conversation yet'}>
           {IgGlyph}<span>DM</span><small>{canDm ? `${leftH} h left` : lead.igUserId ? 'window closed' : lead.handle ? 'no DM yet' : '—'}</small>
@@ -2232,6 +2232,13 @@ function ChannelRow({ r, lead }: { r: R; lead: Lead }) {
           {Icon.email}<span>Email</span><small>{lead.email ? 'from your mail' : 'no email'}</small>
         </button>
       </div>
+      {r.canBridge && lead.phone && (
+        <div className="callvia" role="group" aria-label="Where calls ring on this device">
+          <span>Call from</span>
+          <button className={bridge ? 'on' : ''} onClick={() => r.setDeviceCallMode('bridge')} title="Relay rings your cell first, then dials her">My cell</button>
+          <button className={!bridge ? 'on' : ''} onClick={() => r.setDeviceCallMode('app')} title="Talk through this computer's mic and speakers">This computer</button>
+        </div>
+      )}
       {dm && (
         <div className="chrow-compose dm">
           <textarea value={dmBody} placeholder={`DM ${lead.handle || 'her'}…`} onChange={(e) => setDmBody(e.target.value)} />
@@ -2397,7 +2404,8 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
         else { setStatus(res.code === 'no_cell' ? 'Add your cell in Team first' : `Call failed: ${res.error}`); }
         return;
       }
-      const call = await placeCall(lead.phone || '', lead.id, r.me?.id);
+      let call: any = null;
+      try { call = await placeCall(lead.phone || '', lead.id, r.me?.id); } catch (e) { console.error(e); }
       if (cancelled) { call?.disconnect?.(); return; }
       if (call) {
         callRef.current = call;
@@ -2405,7 +2413,10 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
         call.on('accept', () => { setStatus('Connected'); startTick(); });
         call.on('disconnect', () => setStatus('Call ended'));
         call.on('cancel', () => setStatus('Ended'));
-        call.on('error', (e: any) => { setStatus('Call error'); console.error(e); });
+        call.on('error', (e: any) => { setStatus(e?.code === 31401 || e?.code === 31208 ? 'Microphone blocked — allow it in the browser and try again' : 'Call error'); console.error(e); });
+      } else if (r.enabled) {
+        // Signed in for real: never show the scripted demo as if she picked up.
+        setMode('real'); setStatus('Could not start the call from this computer — allow the microphone, or switch to My cell');
       } else { runSim(outScript); }
     })();
 
