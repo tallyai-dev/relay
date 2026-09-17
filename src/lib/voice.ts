@@ -45,7 +45,67 @@ export async function placeCall(toDisplay: string, leadId?: string, repId?: stri
   const params: Record<string, string> = { To: to };
   if (leadId) params.leadId = leadId;
   if (repId) params.repId = repId; // dial from this rep's own number
-  return d.connect({ params });
+  const call = await d.connect({ params });
+  attachRingback(call);
+  return call;
+}
+
+// ── Local ringback ──────────────────────────────────────────────────────────
+// The dial uses answerOnBridge, so Twilio sends no ringback of its own; the
+// SDK only plays audio when the far end sends early media. When it doesn't,
+// play the standard US ring (440+480 Hz, 2s on / 4s off) until the call is
+// answered or ends, so the rep knows the call is live.
+let ringCtx: AudioContext | null = null;
+let ringStop: (() => void) | null = null;
+
+function startRingback() {
+  if (ringStop) return;
+  try {
+    const AC: typeof AudioContext | undefined = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return;
+    ringCtx = ringCtx || new AC();
+    const ctx = ringCtx;
+    ctx.resume?.().catch(() => {});
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    gain.connect(ctx.destination);
+    const oscs = [440, 480].map((f) => {
+      const o = ctx.createOscillator();
+      o.frequency.value = f;
+      o.connect(gain);
+      o.start();
+      return o;
+    });
+    const cycle = () => {
+      const t = ctx.currentTime;
+      gain.gain.cancelScheduledValues(t);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.12, t + 0.02);
+      gain.gain.setValueAtTime(0.12, t + 1.98);
+      gain.gain.linearRampToValueAtTime(0, t + 2);
+    };
+    cycle();
+    const timer = setInterval(cycle, 6000);
+    ringStop = () => {
+      clearInterval(timer);
+      try { gain.gain.cancelScheduledValues(ctx.currentTime); gain.gain.setValueAtTime(0, ctx.currentTime); } catch { /* noop */ }
+      oscs.forEach((o) => { try { o.stop(); o.disconnect(); } catch { /* noop */ } });
+      try { gain.disconnect(); } catch { /* noop */ }
+    };
+  } catch (e) {
+    console.warn('ringback unavailable', e);
+  }
+}
+
+function stopRingback() {
+  const s = ringStop;
+  ringStop = null;
+  s?.();
+}
+
+function attachRingback(call: Call) {
+  call.on('ringing', (hasEarlyMedia: boolean) => { if (!hasEarlyMedia) startRingback(); });
+  for (const ev of ['accept', 'disconnect', 'cancel', 'reject', 'error']) call.on(ev, stopRingback);
 }
 
 /** Register a handler for inbound calls (Answer/Decline UI hooks into this). */

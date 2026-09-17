@@ -43,6 +43,8 @@ export async function POST(req: Request) {
     const recCb = `${BASE}/api/voice/recording${leadId ? `?leadId=${encodeURIComponent(leadId)}` : ''}`;
     const dial = twiml.dial({
       callerId,
+      // answerOnBridge keeps the browser leg unanswered until she picks up, so
+      // Twilio sends no ringback — src/lib/voice.ts plays one locally.
       answerOnBridge: true,
       record: 'record-from-answer-dual',
       recordingStatusCallback: recCb,

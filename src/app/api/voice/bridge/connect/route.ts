@@ -36,9 +36,13 @@ export async function POST(req: Request) {
   const disclosure = (process.env.RECORDING_DISCLOSURE || '').trim();
   if (disclosure) twiml.say(disclosure);
   const recCb = `${BASE}/api/voice/recording${leadId ? `?leadId=${encodeURIComponent(leadId)}` : ''}`;
+  // No answerOnBridge here: the rep's leg is already answered, and with it on
+  // Twilio passes only the carrier's early media — which most salon lines
+  // never send — so the rep heard dead air until she picked up. Without it,
+  // Twilio plays a US ringback on the rep's cell while her line rings.
   const dial = twiml.dial({
     callerId,
-    answerOnBridge: true,
+    ringTone: 'us',
     timeout: 30,
     record: 'record-from-answer-dual',
     recordingStatusCallback: recCb,
