@@ -1491,3 +1491,113 @@ tr.row-sel td{background:var(--accent-soft,#e6efff)}
 .tpe-plab{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);margin-bottom:4px}
 .tpe-msg{font-size:12px;color:var(--green,#0a7d3a);font-weight:700;padding:0 12px 8px}
 .tpe-edit .tpe-msg{padding:0}
+
+/* ── Lead card (layout A, 9/17): header · contact line · next step · activity ── */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+.lc-peek{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--amber-soft);border:1px solid #efd9b4;color:#6b4614;
+  border-radius:10px;padding:6px 8px 6px 12px;margin-bottom:12px;font-size:12.5px}
+.lc-peek-t{flex:1;min-width:200px}
+.lc-peek .btn{background:transparent;border-color:#e3c898;color:#6b4614}
+.lc-peek .lc-peek-back{background:#6b4614;border-color:#6b4614;color:#fff}
+.lc-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.lc-head-main{flex:1;min-width:240px}
+.lc-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lc-title h2{margin:0;font-size:21px;letter-spacing:-.3px}
+.lc-meta{color:var(--ink2);font-size:12.5px;margin-top:3px}
+.lc-src{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#c2366b}
+.lc-head-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.lc-stage{position:relative;padding:0;cursor:pointer}
+.lc-stage select{appearance:none;-webkit-appearance:none;border:none;background:transparent;color:inherit;font:inherit;font-weight:700;
+  padding:3px 22px 3px 10px;cursor:pointer;border-radius:20px}
+.lc-stage::after{content:"";position:absolute;right:9px;top:50%;width:5px;height:5px;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;
+  transform:translateY(-70%) rotate(45deg);pointer-events:none}
+.lc-more{padding:5px 8px}
+.lc-more svg{width:16px;height:16px;display:block}
+.lc-pop-wrap{position:relative;display:inline-flex}
+.lc-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:40;min-width:250px;background:var(--panel);border:1px solid var(--line);
+  border-radius:12px;box-shadow:0 14px 34px rgba(15,26,44,.16);padding:6px;display:flex;flex-direction:column}
+.lc-menu.right{left:auto;right:0}
+.lc-menu > button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;border:none;border-radius:8px;
+  padding:8px 9px;font:inherit;color:var(--ink);cursor:pointer}
+.lc-menu > button:hover{background:var(--accent-soft)}
+.lc-menu .lc-plain{font-size:12.5px;font-weight:600;padding:8px 10px}
+.lc-menu .lc-danger{color:var(--red)}
+.lc-menu .lc-danger.armed{background:var(--red);color:#fff}
+.lc-mi{width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.lc-mi svg{width:14px;height:14px}
+.lc-mi.call{background:var(--accent-soft);color:var(--accent-ink)}
+.lc-mi.text{background:#efe9f7;color:var(--purple)}
+.lc-mt{display:flex;flex-direction:column;line-height:1.25}
+.lc-mt b{font-size:13px}
+.lc-mt small{font-size:11px;color:var(--ink3)}
+.lc-sep{height:1px;background:var(--line2);margin:4px 6px}
+.lc-default{display:flex;align-items:center;gap:5px;padding:6px 8px 4px;font-size:11px;font-weight:600;color:var(--ink3)}
+.lc-default span{flex:1}
+.lc-default button{border:1px solid var(--line);background:var(--panel);color:var(--ink2);border-radius:999px;padding:2px 8px;font:inherit;font-size:11px;font-weight:700;cursor:pointer}
+.lc-default button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
+.lc-contact{display:flex;align-items:center;gap:6px 16px;flex-wrap:wrap;margin-bottom:12px}
+.lc-phone{display:inline-flex;align-items:center;gap:7px;border:1px solid #c9dafc;background:var(--accent-soft);color:var(--accent-ink);
+  border-radius:9px;padding:6px 10px;font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.lc-phone:hover{border-color:var(--accent)}
+.lc-phone svg{width:15px;height:15px}
+.lc-phone .chev{width:13px;height:13px;margin-left:1px}
+.lc-link{display:inline-flex;align-items:center;gap:6px;background:none;border:none;padding:4px 0;font:inherit;font-size:13px;font-weight:600;
+  color:var(--accent-ink);text-decoration:none;cursor:pointer;max-width:100%}
+.lc-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-link svg{width:14px;height:14px;flex-shrink:0}
+.lc-link.muted{color:var(--ink3)}
+.lc-link:hover span{text-decoration:underline}
+.lc-none{font-size:13px;color:var(--ink3)}
+.lc-dm{display:inline-flex;align-items:center;gap:5px;border:1px solid #f3c1d6;background:#fff5f9;color:#c2366b;border-radius:999px;
+  padding:4px 10px;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.lc-next{display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid #c9dafc;background:#f7faff;border-radius:12px;padding:11px 13px;margin-bottom:14px}
+.lc-next.late{border-color:#f2d6d0;background:#fdf6f4}
+.lc-next.later{border-color:var(--line);background:var(--panel)}
+.lc-next.done{border-color:var(--line);background:#fafbfc}
+.lc-next-ico{width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--accent-soft);color:var(--accent-ink)}
+.lc-next-ico svg{width:16px;height:16px}
+.lc-next-ico.ch-text{background:#efe9f7;color:var(--purple)}
+.lc-next-ico.ch-email{background:var(--blue-soft);color:var(--blue)}
+.lc-next-ico.ch-dm{background:#fff0f6;color:#c2366b}
+.lc-next.done .lc-next-ico{background:#eef1f4;color:var(--ink3)}
+.lc-next-body{flex:1;min-width:200px}
+.lc-kicker{font-size:10.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--accent-ink)}
+.lc-next.late .lc-kicker{color:var(--red)}
+.lc-next.later .lc-kicker,.lc-next.done .lc-kicker{color:var(--ink3)}
+.lc-next-title{font-size:15px;font-weight:700;margin-top:1px}
+.lc-next-sub{font-size:12px;color:var(--ink2);margin-top:1px}
+.lc-next-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.lc-next-actions .btn.primary svg{width:13px;height:13px;vertical-align:-2px}
+.lc-plan{min-width:260px;padding:10px}
+.lc-plan-l{display:flex;flex-direction:column;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--ink3)}
+.lc-plan-l select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:13px;text-transform:none;letter-spacing:0;color:var(--ink);background:var(--panel)}
+.lc-plan .btn.danger{align-self:flex-start;margin-top:2px}
+.lc-activity{padding-top:12px}
+.lc-compose{border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-bottom:14px;background:var(--panel)}
+.lc-compose-bar{display:flex;align-items:center;gap:6px;padding:5px 6px;border-bottom:1px solid var(--line2);background:#fbfcfe}
+.lc-compose-bar .grow,.lc-compose-foot .grow{flex:1}
+.lc-tabs{display:flex;gap:2px}
+.lc-tabs button{border:none;background:transparent;font:inherit;font-size:12px;font-weight:700;color:var(--ink2);padding:5px 10px;border-radius:7px;cursor:pointer}
+.lc-tabs button.on{background:var(--ink);color:#fff}
+.lc-tabs button:disabled{opacity:.4;cursor:not-allowed}
+.lc-compose textarea{display:block;width:100%;box-sizing:border-box;border:none;resize:vertical;min-height:44px;padding:10px 12px;font:inherit;font-size:13px;color:var(--ink);background:transparent;outline:none}
+.lc-compose-foot{display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid var(--line2);font-size:11px}
+.lc-compose-foot .btn.primary.text{background:var(--purple);border-color:var(--purple)}
+.lc-compose-foot .btn.primary.dm{background:#c2366b;border-color:#c2366b}
+.lc-flash{font-size:11.5px;font-weight:700}
+.lc-flash.ok{color:#2f855a}
+.lc-flash.bad{color:var(--red)}
+.lc-act-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.lc-act-head .bt{flex:1}
+.lc-filters{display:flex;gap:2px;flex-wrap:wrap}
+.lc-filters button{border:none;background:transparent;font:inherit;font-size:11.5px;font-weight:600;color:var(--ink2);padding:4px 9px;border-radius:7px;cursor:pointer}
+.lc-filters button b{font-weight:800}
+.lc-filters button.on{background:var(--accent-soft);color:var(--accent-ink)}
+.tl-first{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-more{margin-top:4px}
+@media (max-width:760px){
+  .lc-head-actions{width:100%}
+  .lc-next-actions{width:100%}
+  .lc-menu{min-width:230px}
+  .lc-phone{font-size:15px;padding:8px 12px}
+}

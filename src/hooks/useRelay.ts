@@ -511,10 +511,11 @@ export function useRelay() {
 
   // Manual click-to-call from a lead card's phone number: jump to that lead in
   // the dialer and open the call panel (which places the real call).
-  const startCall = useCallback((leadId: string) => {
+  // mode (optional) overrides this device's cell/computer default for one call.
+  const startCall = useCallback((leadId: string, mode?: 'bridge' | 'app') => {
     setActiveLeadId(leadId);
     setView('dialer');
-    setActiveCall({ leadId, direction: 'out', viaFlow: false });
+    setActiveCall({ leadId, direction: 'out', viaFlow: false, bridge: mode ? mode === 'bridge' : undefined });
   }, []);
 
   // Cell bridge: Relay rings MY cell, then dials her from the Relay number.

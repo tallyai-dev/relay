@@ -1568,28 +1568,6 @@ function TemplatesSheet({ r, lead, tab: tab0 = 'text', onClose, onPickText }: { 
   );
 }
 
-function TemplatesButton({ r, lead, tab }: { r: R; lead: Lead; tab?: TplTab }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button className="btn sm" onClick={() => setOpen(true)} title="Texts and emails for every prospecting moment">📄 Templates</button>
-      {open && <TemplatesSheet r={r} lead={lead} tab={tab} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
-function QuickEmail({ r, lead }: { r: R; lead: Lead }) {
-  const [open, setOpen] = useState(false);
-  const hasEmail = !!lead.email;
-  return (
-    <>
-      <button className="btn sm" disabled={!hasEmail} onClick={() => setOpen(true)}
-        title={hasEmail ? `Email ${lead.email}` : 'No email on file — enrich the lead first'}>✉ Email</button>
-      {open && hasEmail && <EmailComposer r={r} lead={lead} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
 // Opens the Calendly scheduler in a popup over Relay, prefilled with the salon.
 // The booking syncs back via /api/calendly/webhook.
 function BookDemo({ lead }: { lead: Lead }) {
@@ -1652,27 +1630,6 @@ function EmailComposer({ r, lead, onClose, initial }: { r: R; lead: Lead; onClos
 }
 
 // Per-salon touch tally + a way to pull the salon out of the cadence.
-function TouchStrip({ r, lead, acts }: { r: R; lead: Lead; acts: Activity[] }) {
-  const calls = acts.filter((a) => (a.kind === 'call' || a.kind === 'book') && a.direction !== 'in').length;
-  const texts = acts.filter((a) => a.kind === 'text' && a.direction !== 'in').length;
-  const emails = acts.filter((a) => a.kind === 'email' && a.direction !== 'in').length;
-  const demos = acts.filter((a) => a.kind === 'book' || a.disposition === 'booked').length;
-  const removed = lead.stage === 'cold';
-  return (
-    <div className="touch-strip">
-      <div className="ts-counts">
-        <span className="ts">{Icon.call}<b>{calls}</b> {calls === 1 ? 'call' : 'calls'}</span>
-        <span className="ts">{Icon.text}<b>{texts}</b> {texts === 1 ? 'text' : 'texts'}</span>
-        <span className="ts">{Icon.email}<b>{emails}</b> {emails === 1 ? 'email' : 'emails'}</span>
-        <span className="ts ts-demo">🎉 <b>{demos}</b> {demos === 1 ? 'demo' : 'demos'}</span>
-      </div>
-      {removed
-        ? <span className="ts-removed">⊘ Removed from cadence</span>
-        : <RemoveFromCadence r={r} leadId={lead.id} />}
-    </div>
-  );
-}
-
 function RemoveFromCadence({ r, leadId }: { r: R; leadId: string }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 3500); return () => clearTimeout(t); }, [armed]);
@@ -1711,6 +1668,332 @@ function FlowDone({ r }: { r: R }) {
   );
 }
 
+// ── Lead card (layout A, 9/17) ─────────────────────────────────────────────────
+// One header, one contact line, one Next step card, one Activity card with the
+// composer on top. The phone number IS the call/text control (no separate
+// Call / Text / Email tiles), and cadence, callback and "remove" live together
+// in the Next step card.
+
+// Close a popover when the user clicks anywhere outside it.
+function useOutsideClose(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) close(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open, close]);
+  return ref;
+}
+
+type ComposeTab = 'note' | 'text' | 'dm';
+
+// The phone number as a button: call through my cell, call from this computer,
+// text, or copy. The device default (cell vs computer) is set from here too.
+function PhoneMenu({ r, lead, onText }: { r: R; lead: Lead; onText: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const ref = useOutsideClose(open, () => setOpen(false));
+  if (!lead.phone) return <span className="lc-none">No phone · <em>add one with Edit</em></span>;
+  const pick = (fn: () => void) => { setOpen(false); fn(); };
+  const bridgeDefault = r.useBridge;
+  return (
+    <div className="lc-pop-wrap" ref={ref}>
+      <button className="lc-phone" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}>
+        {Icon.call}<span>{fmtPhone(lead.phone)}</span><svg className="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="m6 9 6 6 6-6" /></svg>
+      </button>
+      {open && (
+        <div className="lc-menu" role="menu">
+          {r.canBridge && (
+            <button role="menuitem" onClick={() => pick(() => r.startCall(lead.id, 'bridge'))}>
+              <span className="lc-mi call">{Icon.call}</span><span className="lc-mt"><b>Call{bridgeDefault ? ' · default' : ''}</b><small>rings my cell first</small></span>
+            </button>
+          )}
+          <button role="menuitem" onClick={() => pick(() => r.startCall(lead.id, 'app'))}>
+            <span className="lc-mi call"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg></span>
+            <span className="lc-mt"><b>Call from this computer{r.canBridge && !bridgeDefault ? ' · default' : ''}</b><small>headset or speakers</small></span>
+          </button>
+          <button role="menuitem" onClick={() => pick(onText)}>
+            <span className="lc-mi text">{Icon.text}</span><span className="lc-mt"><b>Text</b><small>from the Relay number</small></span>
+          </button>
+          <div className="lc-sep" />
+          <button role="menuitem" className="lc-plain" onClick={() => { navigator.clipboard?.writeText(lead.phone || ''); setCopied(true); setTimeout(() => { setCopied(false); setOpen(false); }, 900); }}>{copied ? '✓ Copied' : 'Copy number'}</button>
+          {r.canBridge && (
+            <div className="lc-default">
+              <span>Default here</span>
+              <button className={bridgeDefault ? 'on' : ''} onClick={() => r.setDeviceCallMode('bridge')}>My cell</button>
+              <button className={!bridgeDefault ? 'on' : ''} onClick={() => r.setDeviceCallMode('app')}>This computer</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Stage as a small pill you can change in place.
+function StageSelect({ r, lead }: { r: R; lead: Lead }) {
+  return (
+    <label className={`lc-stage pill ${stagePill[lead.stage]}`} title="Change stage">
+      <span className="sr-only">Stage</span>
+      <select value={lead.stage} onChange={(e) => {
+        const v = e.target.value as Lead['stage'];
+        if (v === 'cold' && lead.stage !== 'cold') r.removeFromCadence(lead.id); // logs it + moves the flow on
+        else r.setStage(lead.id, v);
+      }}>
+        {Object.keys(stageLabel).map((s) => <option key={s} value={s}>{stageLabel[s]}</option>)}
+      </select>
+    </label>
+  );
+}
+
+// Edit and Delete tucked behind ⋯ .
+function LeadMoreMenu({ r, lead, onEdit }: { r: R; lead: Lead; onEdit: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useOutsideClose(open, () => setOpen(false));
+  return (
+    <div className="lc-pop-wrap" ref={ref}>
+      <button className="btn sm lc-more" onClick={() => setOpen((v) => !v)} aria-label="More actions" aria-haspopup="menu" aria-expanded={open}>
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+      </button>
+      {open && (
+        <div className="lc-menu right" role="menu">
+          <button role="menuitem" className="lc-plain" onClick={() => { setOpen(false); onEdit(); }}>✎ Edit details</button>
+          <div className="lc-sep" />
+          <DeleteLeadButton r={r} leadId={lead.id} className="lc-plain lc-danger" label="Delete lead" armedLabel="Tap again to delete" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const needsEnrich = (l: Lead) => !l.phone || !l.email || !l.website || !l.bookingSystem || !l.city;
+
+function LeadHeader({ r, lead, onEdit }: { r: R; lead: Lead; onEdit: () => void }) {
+  // Decided when the lead opens, so the "✓ Added …" result stays visible after
+  // enrich fills the last gap.
+  const [enrichable, setEnrichable] = useState(() => needsEnrich(lead));
+  useEffect(() => { setEnrichable(needsEnrich(lead)); }, [lead.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const who = lead.contact?.name && lead.contact.name !== '—' ? `${lead.contact.name}${lead.contact.role && lead.contact.role !== '—' ? ` (${lead.contact.role})` : ''}` : '';
+  const meta = [lead.city, lead.bookingSystem, who, lead.lastTouch ? `last touch ${lead.lastTouch}` : ''].filter(Boolean).join(' · ');
+  return (
+    <div className="lc-head">
+      <div className="lc-head-main">
+        <div className="lc-title"><h2>{lead.salon}</h2><StageSelect r={r} lead={lead} />{lead.source === 'instagram' && <span className="lc-src">{IgGlyph} Instagram lead</span>}</div>
+        {meta && <div className="lc-meta">{meta}</div>}
+      </div>
+      <div className="lc-head-actions">
+        <BookDemo lead={lead} />
+        <AgentCallButton r={r} lead={lead} />
+        {enrichable && <LeadEnrich key={lead.id} r={r} lead={lead} />}
+        <LeadMoreMenu r={r} lead={lead} onEdit={onEdit} />
+      </div>
+    </div>
+  );
+}
+
+function ContactLine({ r, lead, onCompose, onEdit }: { r: R; lead: Lead; onCompose: (t: ComposeTab) => void; onEdit: () => void }) {
+  const [emailOpen, setEmailOpen] = useState(false);
+  const canDm = dmOpen(lead);
+  const leftH = lead.lastSocialAt ? Math.max(0, Math.floor((24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime())) / 3600_000)) : 0;
+  const ig = lead.handle ? lead.handle.replace(/^@+/, '') : '';
+  const site = lead.website ? lead.website.replace(/^https?:\/\//, '').replace(/\/$/, '') : '';
+  return (
+    <div className="lc-contact">
+      <PhoneMenu r={r} lead={lead} onText={() => onCompose('text')} />
+      {lead.email
+        ? <button className="lc-link" onClick={() => setEmailOpen(true)} title={`Email ${lead.email}`}>{Icon.email}<span>{lead.email}</span></button>
+        : <button className="lc-link muted" onClick={onEdit}>{Icon.email}<span>Add email</span></button>}
+      {site && <a className="lc-link" href={/^https?:/.test(lead.website || '') ? lead.website : `https://${site}`} target="_blank" rel="noreferrer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg><span>{site}</span></a>}
+      {ig
+        ? <a className="lc-link" href={`https://instagram.com/${ig}`} target="_blank" rel="noreferrer">{IgGlyph}<span>@{ig}</span></a>
+        : <button className="lc-link muted" onClick={onEdit}>{IgGlyph}<span>Add Instagram</span></button>}
+      {canDm && <button className="lc-dm" onClick={() => onCompose('dm')}>{IgGlyph} DM · {leftH} h left</button>}
+      {emailOpen && lead.email && <EmailComposer r={r} lead={lead} onClose={() => setEmailOpen(false)} />}
+    </div>
+  );
+}
+
+const CH_WORD: Record<string, string> = { call: 'Call', text: 'Text', email: 'Email', dm: 'Instagram DM', wait: 'Wait' };
+const fmtWhen = (d: Date) => d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+// What happens next for this lead, and every control that changes it.
+function NextStepCard({ r, lead, onCompose, flowMode }: { r: R; lead: Lead; onCompose: (t: ComposeTab) => void; flowMode?: boolean }) {
+  const [picking, setPicking] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const planRef = useOutsideClose(planOpen, () => setPlanOpen(false));
+  useEffect(() => { setPicking(false); setPlanOpen(false); }, [lead.id]);
+  const cad = r.cadenceById(lead.cadenceId);
+  const steps = cad?.steps || [];
+  const step = steps[lead.cadencePos];
+  const cb = lead.callbackAt ? new Date(lead.callbackAt) : null;
+  const cbLate = cb ? cb.getTime() < Date.now() : false;
+
+  let tone: 'due' | 'late' | 'later' | 'done' = 'due';
+  let kicker = '';
+  let title = '';
+  let sub = '';
+  let channel: string | undefined;
+  if (cb) {
+    channel = 'call';
+    tone = cbLate ? 'late' : 'later';
+    kicker = cbLate ? 'Callback · overdue' : 'Callback · reminder set';
+    title = `Call back ${fmtWhen(cb)}`;
+    sub = lead.callbackNote || 'Your phone buzzes 5 min before.';
+  } else if (lead.stage === 'won') {
+    tone = 'done'; kicker = 'Customer'; title = 'No follow-up needed'; sub = 'Marked Won.';
+  } else if (lead.stage === 'cold') {
+    tone = 'done'; kicker = 'Out of the plan'; title = 'Not being followed up'; sub = 'Removed from its cadence. Change the stage to bring it back.';
+  } else if (lead.cadenceCompletedAt) {
+    tone = 'done'; kicker = 'Plan finished'; title = `Finished ${lead.cadenceCompletedName || 'its cadence'}`; sub = `${fmtDate(lead.cadenceCompletedAt)} · set a callback or pick another plan`;
+  } else if (flowMode) {
+    tone = 'later'; kicker = 'In today’s flow'; title = 'Work it with the bar above'; sub = `${cad?.name || 'Plan'} · step ${lead.cadencePos + 1} of ${steps.length || 1}`;
+  } else if (step) {
+    channel = step.channel;
+    const due = lead.nextActionAt ? new Date(lead.nextActionAt) : null;
+    const late = !!due && isOverdue(lead);
+    const future = !!due && due.getTime() > Date.now() && !late;
+    tone = late ? 'late' : future ? 'later' : 'due';
+    kicker = late ? `Next step · overdue since ${fmtDate(lead.nextActionAt)}` : future ? `Next step · ${fmtDate(lead.nextActionAt)}` : 'Next step · due now';
+    title = `${CH_WORD[step.channel] || 'Touch'}${step.channel === 'call' ? ` · try ${steps.slice(0, lead.cadencePos + 1).filter((s) => s.channel === 'call').length}` : ''}`;
+    const after = steps.slice(lead.cadencePos + 1).find((s) => s.channel !== 'wait');
+    sub = `${cad?.name || 'Plan'} · step ${lead.cadencePos + 1} of ${steps.length}${after ? ` · then ${CH_WORD[after.channel]?.toLowerCase()}` : ' · last step'}`;
+  } else {
+    kicker = 'Next step'; title = 'No plan yet'; sub = 'Pick a plan or set a callback.';
+  }
+
+  const act = () => {
+    if (channel === 'call') r.startCall(lead.id);
+    else if (channel === 'text') onCompose('text');
+    else if (channel === 'dm') onCompose(dmOpen(lead) ? 'dm' : 'text');
+    else if (channel === 'email') setEmailOpen(true);
+  };
+  const canAct = !flowMode && !!channel && channel !== 'wait'
+    && !((channel === 'call' || channel === 'text') && !lead.phone) && !(channel === 'email' && !lead.email)
+    && !(channel === 'dm' && !dmOpen(lead) && !lead.phone);
+
+  if (picking) {
+    return <CallbackPicker lead={lead} initialNote={lead.callbackNote} onSet={(iso, note) => { r.setCallback(lead.id, iso, note); setPicking(false); }} onCancel={() => setPicking(false)} />;
+  }
+  return (
+    <div className={`lc-next ${tone}`}>
+      <span className={`lc-next-ico ch-${channel || 'none'}`}>{channel === 'text' ? Icon.text : channel === 'email' ? Icon.email : channel === 'dm' ? IgGlyph : Icon.call}</span>
+      <div className="lc-next-body">
+        <div className="lc-kicker">{kicker}</div>
+        <div className="lc-next-title">{title}</div>
+        <div className="lc-next-sub">{sub}</div>
+      </div>
+      <div className="lc-next-actions">
+        {canAct && <button className="btn sm primary" onClick={act}>{channel === 'call' ? <>{Icon.call} Call</> : channel === 'email' ? 'Write email' : channel === 'dm' ? 'Write DM' : 'Write text'}</button>}
+        {cb
+          ? <><button className="btn sm" onClick={() => setPicking(true)}>Change time</button><button className="btn sm" onClick={() => r.setCallback(lead.id, null)}>Done</button></>
+          : lead.stage !== 'won' && <button className="btn sm" onClick={() => setPicking(true)}>Set callback</button>}
+        <div className="lc-pop-wrap" ref={planRef}>
+          <button className="btn sm" onClick={() => setPlanOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={planOpen}>Plan ▾</button>
+          {planOpen && (
+            <div className="lc-menu right lc-plan">
+              <label className="lc-plan-l">Follow-up plan
+                <select value={r.cadences.some((c) => c.id === lead.cadenceId) ? lead.cadenceId : (r.cadences[0]?.id || '')}
+                  onChange={(e) => { r.assignCadence(lead.id, e.target.value); setPlanOpen(false); }}>
+                  {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+              {lead.stage !== 'cold' && <><div className="lc-sep" /><RemoveFromCadence r={r} leadId={lead.id} /></>}
+            </div>
+          )}
+        </div>
+      </div>
+      {emailOpen && lead.email && <EmailComposer r={r} lead={lead} onClose={() => setEmailOpen(false)} />}
+    </div>
+  );
+}
+
+// Note / Text / DM box that sits on top of the activity list.
+function LeadComposer({ r, lead, tab, setTab, focusKey }: { r: R; lead: Lead; tab: ComposeTab; setTab: (t: ComposeTab) => void; focusKey: number }) {
+  const [body, setBody] = useState('');
+  const [tpl, setTpl] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { setBody(''); setMsg(null); }, [lead.id]);
+  useEffect(() => { if (focusKey) ref.current?.focus(); }, [tab, focusKey]);
+  const canDm = dmOpen(lead);
+  useEffect(() => { if (tab === 'dm' && !canDm) setTab('note'); }, [tab, canDm, setTab]);
+  const flash = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3500); };
+  const send = async () => {
+    const b = body.trim();
+    if (!b) return;
+    if (tab === 'note') { r.addActivity(lead.id, { kind: 'note', ty: 'Note', time: 'Just now', body: b }); setBody(''); flash('✓ Note saved'); return; }
+    if (tab === 'text') { if (!lead.phone) return; r.sendReply(lead.id, b, 'text'); setBody(''); flash('✓ Text sent'); return; }
+    const res = await r.sendLeadDm(lead.id, b);
+    if (res.ok) { setBody(''); flash('✓ DM sent'); } else flash(res.error || 'DM failed');
+  };
+  const placeholder = tab === 'note' ? 'Add a note about this salon…' : tab === 'text' ? (lead.phone ? `Text ${fmtPhone(lead.phone)} from the Relay number…` : 'No phone on file') : `DM ${lead.handle || 'her'} on Instagram…`;
+  const sendLabel = tab === 'note' ? 'Save note' : tab === 'text' ? 'Send text' : 'Send DM';
+  const disabled = !body.trim() || (tab === 'text' && !lead.phone);
+  return (
+    <div className="lc-compose">
+      <div className="lc-compose-bar">
+        <div className="lc-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === 'note'} className={tab === 'note' ? 'on' : ''} onClick={() => setTab('note')}>Note</button>
+          <button role="tab" aria-selected={tab === 'text'} className={tab === 'text' ? 'on' : ''} disabled={!lead.phone} onClick={() => setTab('text')}>Text</button>
+          <button role="tab" disabled={!lead.email} onClick={() => setEmailOpen(true)} title={lead.email ? `Email ${lead.email}` : 'No email on file'}>Email</button>
+          {canDm && <button role="tab" aria-selected={tab === 'dm'} className={tab === 'dm' ? 'on' : ''} onClick={() => setTab('dm')}>DM</button>}
+        </div>
+        <span className="grow" />
+        {msg && <span className={`lc-flash ${msg.startsWith('✓') ? 'ok' : 'bad'}`}>{msg}</span>}
+        <button className="btn sm" onClick={() => setTpl(true)} title="Texts, emails and the “wants info” product emails">📄 Templates</button>
+      </div>
+      <textarea ref={ref} value={body} placeholder={placeholder} onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} />
+      {body.trim() && (
+        <div className="lc-compose-foot">
+          <span className="muted">{tab === 'note' ? '⌘↵ to save' : tab === 'text' ? `${body.length} chars · ⌘↵ to send` : '⌘↵ to send'}</span>
+          <span className="grow" />
+          <button className="btn sm" onClick={() => setBody('')}>Clear</button>
+          <button className={`btn sm primary ${tab}`} disabled={disabled} onClick={send}>{sendLabel}</button>
+        </div>
+      )}
+      {tpl && <TemplatesSheet r={r} lead={lead} tab={lead.phone ? 'text' : 'email'} onClose={() => setTpl(false)}
+        onPickText={tab === 'text' ? (b) => setBody(b) : undefined} />}
+      {emailOpen && lead.email && <EmailComposer r={r} lead={lead} onClose={() => setEmailOpen(false)} />}
+    </div>
+  );
+}
+
+type ActFilter = 'all' | 'call' | 'text' | 'email' | 'note';
+function ActivityCard({ r, lead, acts, tab, setTab, focusKey }: { r: R; lead: Lead; acts: Activity[]; tab: ComposeTab; setTab: (t: ComposeTab) => void; focusKey: number }) {
+  const [filter, setFilter] = useState<ActFilter>('all');
+  useEffect(() => { setFilter('all'); }, [lead.id]);
+  const kindOf = (a: Activity): ActFilter => (a.kind === 'call' || a.kind === 'book' ? 'call' : a.kind === 'text' ? 'text' : a.kind === 'email' ? 'email' : 'note');
+  const count = (f: ActFilter) => acts.filter((a) => kindOf(a) === f).length;
+  const shown = filter === 'all' ? acts : acts.filter((a) => kindOf(a) === filter);
+  const tabs: { k: ActFilter; label: string; n: number }[] = [
+    { k: 'all', label: 'All', n: acts.length }, { k: 'call', label: 'Calls', n: count('call') },
+    { k: 'text', label: 'Texts', n: count('text') }, { k: 'email', label: 'Emails', n: count('email') }, { k: 'note', label: 'Notes', n: count('note') },
+  ];
+  return (
+    <div className="block lc-activity">
+      <LeadComposer r={r} lead={lead} tab={tab} setTab={setTab} focusKey={focusKey} />
+      <div className="lc-act-head">
+        <div className="bt">Activity</div>
+        <div className="lc-filters">
+          {tabs.filter((t) => t.k === 'all' || t.n > 0).map((t) => (
+            <button key={t.k} className={filter === t.k ? 'on' : ''} onClick={() => setFilter(t.k)}>{t.label} <b>{t.n}</b></button>
+          ))}
+        </div>
+      </div>
+      <div className="timeline">
+        {shown.length === 0 && <div className="muted">{acts.length ? 'Nothing of this kind yet.' : 'No activity yet — first touch.'}</div>}
+        {shown.map((h) => <TimelineItem key={h.id} h={h} />)}
+      </div>
+    </div>
+  );
+}
+
 function Dialer({ r }: { r: R }) {
   // Whole due list worked (or nothing was due) → the day-cleared screen.
   if (r.flow.on && r.flow.done) return <FlowDone r={r} />;
@@ -1718,9 +2001,11 @@ function Dialer({ r }: { r: R }) {
   if (!lead) return null;
   const acts = r.activities[lead.id] || [];
   const inFlow = r.flow.on && !r.flow.paused;
-  const idx = r.leads.findIndex((l) => l.id === lead.id);
   const [editing, setEditing] = useState(false);
-  useEffect(() => { setEditing(false); }, [lead.id]);
+  const [composeTab, setComposeTab] = useState<ComposeTab>('note');
+  const [composeNonce, setComposeNonce] = useState(0);
+  useEffect(() => { setEditing(false); setComposeTab('note'); }, [lead.id]);
+  const compose = (t: ComposeTab) => { setComposeTab(t); setComposeNonce((n) => n + 1); };
 
   return (
     <section className="view on" style={{ padding: 0 }}>
@@ -1762,66 +2047,20 @@ function Dialer({ r }: { r: R }) {
             <div className="flow-notice">{r.flow.notice}<span className="fn-next">Next up: {lead.salon}</span></div>
           )}
 
-          <div className="lead-head">
-            <div className="avatar big" style={{ background: colorFor(idx), position: 'relative', overflow: 'visible' }}>{initials(lead.salon)}{lead.source === 'instagram' && <IgBadge size={20} />}</div>
-            <div>
-              <h2>{lead.salon}</h2>
-              <div className="meta">{lead.contact?.name === '—' ? lead.contact?.role : `${lead.contact?.name} · ${lead.contact?.role}`}{lead.city ? ` · ${lead.city}` : ''}</div>
-              {lead.cadenceCompletedAt && (
-                <div className="cad-done">✓ Completed {lead.cadenceCompletedName || 'cadence'} · {fmtDate(lead.cadenceCompletedAt)}</div>
-              )}
-              {!lead.cadenceCompletedAt && isOverdue(lead) && (
-                <div className="cad-overdue">⏰ Overdue · was due {fmtDate(lead.nextActionAt)}</div>
-              )}
-            </div>
-            <div className="r"><BookDemo lead={lead} /><AgentCallButton r={r} lead={lead} /><TemplatesButton r={r} lead={lead} /><QuickEmail r={r} lead={lead} /><LeadEnrich r={r} lead={lead} /><button className="btn sm" onClick={() => setEditing((v) => !v)} title="Edit lead details">{editing ? 'Close' : '✎ Edit'}</button><DeleteLeadButton r={r} leadId={lead.id} /><span className={`pill ${stagePill[lead.stage]}`}><span className="dot" style={{ background: 'currentColor' }} />{stageLabel[lead.stage]}</span></div>
-          </div>
+          {inFlow && r.current && r.activeLeadId !== r.current.leadId && <FlowPeekBar r={r} viewing={lead} />}
 
-          <ChannelRow r={r} lead={lead} />
+          <LeadHeader r={r} lead={lead} onEdit={() => setEditing(true)} />
+          <ContactLine r={r} lead={lead} onCompose={compose} onEdit={() => setEditing(true)} />
+          {editing && <LeadEditForm r={r} lead={lead} onDone={() => setEditing(false)} />}
           <LeadContextCards r={r} lead={lead} />
 
-          {inFlow ? (
-            // The action bar always belongs to the flow's CURRENT lead. If the rep
-            // has browsed to a different lead in the queue, show a peek banner
-            // instead of a compose — never a send box under the wrong salon.
-            r.current && r.activeLeadId === r.current.leadId
-              ? <FlowBar r={r} lead={r.currentLead || lead} />
-              : <FlowPeekBar r={r} viewing={lead} />
-          ) : (
-            <div className="task-strip"><div className="cb" /><div className="t">Call — {lead.objection}</div>
-              <div className="chip amber">Due today</div>
-              <div className="o"><button className="btn sm primary" onClick={() => r.startFlow()}>Start Flow</button></div></div>
-          )}
+          {/* The flow's action bar belongs to the flow's CURRENT lead only. */}
+          {inFlow && r.current && r.activeLeadId === r.current.leadId && <FlowBar r={r} lead={r.currentLead || lead} />}
 
-          {editing ? <LeadEditForm r={r} lead={lead} onDone={() => setEditing(false)} /> : (
-          <div className="qgrid">
-            <div className="qc"><div className="qk">Phone</div><div className="qv">{lead.phone
-              ? <button className="qv-call" title={`Call ${lead.phone}`} onClick={() => r.startCall(lead.id)}>{Icon.call} {lead.phone}</button>
-              : <span className="muted">—</span>}</div></div>
-            <div className="qc"><div className="qk">Email</div><div className="qv">{lead.email ? <a className="qv-link" href={`mailto:${lead.email}`}>{lead.email}</a> : <span className="muted">—</span>}</div></div>
-            <div className="qc"><div className="qk">Booking</div><div className="qv">{lead.bookingSystem ? <span className="book-chip">{lead.bookingSystem}</span> : <span className="muted">—</span>}</div></div>
-            <div className="qc"><div className="qk">Website</div><div className="qv">{lead.website ? <a className="qv-link" href={`https://${lead.website}`} target="_blank" rel="noreferrer">{lead.website}</a> : <span className="muted">—</span>}</div></div>
-            <div className="qc"><div className="qk">Instagram</div><div className="qv">{lead.handle ? <a className="qv-link" href={`https://instagram.com/${lead.handle.replace(/^@+/, '')}`} target="_blank" rel="noreferrer">{lead.handle}</a> : <span className="muted">—</span>}</div></div>
-            <div className="qc"><div className="qk">Cadence</div>
-              <select className="qv-select" value={r.cadences.some((c) => c.id === lead.cadenceId) ? lead.cadenceId : (r.cadences[0]?.id || '')}
-                onChange={(e) => r.assignCadence(lead.id, e.target.value)} onClick={(e) => e.stopPropagation()}>
-                {r.cadences.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div className="qc"><div className="qk">City</div><div className="qv">{lead.city || <span className="muted">—</span>}</div></div>
-            <div className="qc"><div className="qk">Last touch</div><div className="qv">{lead.lastTouch}</div></div>
-          </div>
-          )}
+          {/* In a flow the action bar above is the next action; the card keeps callback + plan controls. */}
+          <NextStepCard r={r} lead={lead} onCompose={compose} flowMode={!!(inFlow && r.current && r.current.leadId === lead.id)} />
 
-          <TouchStrip r={r} lead={lead} acts={acts} />
-
-          <div className="block" style={{ marginTop: 14 }}>
-            <div className="bh"><div className="bt">Activity · {acts.length}</div></div>
-            <div className="timeline">
-              {acts.length === 0 && <div className="muted">No activity yet — first touch.</div>}
-              {acts.map((h) => <TimelineItem key={h.id} h={h} />)}
-            </div>
-          </div>
+          <ActivityCard r={r} lead={lead} acts={acts} tab={composeTab} setTab={setComposeTab} focusKey={composeNonce} />
         </div>
 
         {/* right: script */}
@@ -1880,7 +2119,12 @@ function LeadEditForm({ r, lead, onDone }: { r: R; lead: Lead; onDone: () => voi
 
 function TimelineItem({ h }: { h: Activity }) {
   const [showTx, setShowTx] = useState(false);
+  const [open, setOpen] = useState(false);
   const sid = recSid(h.recordingUrl);
+  const text = h.aiNote || h.body || '';
+  // Long emails show their first line; the full body is one tap away.
+  const collapsible = h.kind === 'email' && text.length > 160;
+  const firstLine = collapsible ? text.split('\n').find((x) => x.trim()) || text : text;
   return (
     <div className={`tl ${h.kind}`}>
       <div className="dot" />
@@ -1891,7 +2135,8 @@ function TimelineItem({ h }: { h: Activity }) {
         <span className="tm">{h.time}</span>
       </div>
       <div className={`body ${h.kind === 'call' || h.kind === 'book' ? 'card' : ''}`} style={{ whiteSpace: 'pre-line' }}>
-        {h.aiNote || h.body}
+        {collapsible && !open ? <span className="tl-first">{firstLine}</span> : text}
+        {collapsible && <button className="rec-tx-toggle tl-more" onClick={() => setOpen((v) => !v)}>{open ? 'Hide email' : 'Show email'}</button>}
         {h.ownNote && <div className="own-note">📝 {h.ownNote}</div>}
         {sid && (
           <div className="rec-player">
@@ -2081,13 +2326,10 @@ function ScriptPanel({ lead }: { lead: Lead }) {
 function FlowPeekBar({ r, viewing }: { r: R; viewing: Lead }) {
   const cur = r.currentLead;
   return (
-    <div className="flowbar peek">
-      <span className="fb-badge">👀 Viewing {viewing.salon}</span>
-      <span className="fb-what">Your flow is on <b>{cur?.salon || 'the current lead'}</b>. Jump here to work {viewing.salon} now — {cur?.salon || 'it'} resumes right after.</span>
-      <div className="fb-actions">
-        <button className="btn primary sm" onClick={() => r.workLeadNow(viewing.id)}>Work {viewing.salon} now</button>
-        <button className="btn sm" onClick={() => cur && r.setActiveLeadId(cur.id)}>Back to flow →</button>
-      </div>
+    <div className="lc-peek">
+      <span className="lc-peek-t">⚡ Your flow is on <b>{cur?.salon || 'another salon'}</b>. You’re looking at {viewing.salon}.</span>
+      <button className="btn sm" onClick={() => r.workLeadNow(viewing.id)}>Work this lead now</button>
+      <button className="btn sm lc-peek-back" onClick={() => cur && r.setActiveLeadId(cur.id)}>Back to flow →</button>
     </div>
   );
 }
@@ -2213,72 +2455,11 @@ function CallbackPicker({ lead, onSet, onCancel, flow, initialNote }: { lead: Le
   );
 }
 
-// The four ways to reach her, always in the same place. Relay greys out what
-// can't work (no phone, no Instagram conversation / window closed, no email).
-function ChannelRow({ r, lead }: { r: R; lead: Lead }) {
-  const [dm, setDm] = useState(false);
-  const [dmBody, setDmBody] = useState('');
-  const [dmMsg, setDmMsg] = useState<string | null>(null);
-  const [emailOpen, setEmailOpen] = useState(false);
-  const [text, setText] = useState(false);
-  const [textBody, setTextBody] = useState('');
-  const [tplPick, setTplPick] = useState(false);
-  const canDm = dmOpen(lead);
-  const leftH = lead.lastSocialAt ? Math.max(0, Math.floor((24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime())) / 3600_000)) : 0;
-  const bridge = r.useBridge;
-  return (
-    <div className="chrow-wrap">
-      <div className="chrow">
-        <button className="chb pri" disabled={!lead.phone} onClick={() => r.startCall(lead.id)} title={bridge ? 'Relay rings your cell, then dials her from the Relay number' : 'Call from this computer (mic + speakers), from the Relay number'}>
-          {Icon.call}<span>Call</span><small>{lead.phone ? (bridge ? 'rings my cell' : 'this computer') : 'no phone'}</small>
-        </button>
-        <button className={`chb ig ${canDm ? '' : 'off'}`} onClick={() => { if (canDm) { setDm((v) => !v); setDmMsg(null); } }} title={canDm ? 'Instagram DM' : lead.igUserId ? 'Her 24-hour DM window is closed — text her' : 'No Instagram conversation yet'}>
-          {IgGlyph}<span>DM</span><small>{canDm ? `${leftH} h left` : lead.igUserId ? 'window closed' : lead.handle ? 'no DM yet' : '—'}</small>
-        </button>
-        <button className={`chb ${lead.phone ? '' : 'off'}`} onClick={() => lead.phone && setText((v) => !v)} title="Text from the Relay number">
-          {Icon.text}<span>Text</span><small>{lead.phone ? 'Relay number' : 'no phone'}</small>
-        </button>
-        <button className={`chb ${lead.email ? '' : 'off'}`} onClick={() => lead.email && setEmailOpen(true)} title="Email from your own mail app">
-          {Icon.email}<span>Email</span><small>{lead.email ? 'from your mail' : 'no email'}</small>
-        </button>
-      </div>
-      {r.canBridge && lead.phone && (
-        <div className="callvia" role="group" aria-label="Where calls ring on this device">
-          <span>Call from</span>
-          <button className={bridge ? 'on' : ''} onClick={() => r.setDeviceCallMode('bridge')} title="Relay rings your cell first, then dials her">My cell</button>
-          <button className={!bridge ? 'on' : ''} onClick={() => r.setDeviceCallMode('app')} title="Talk through this computer's mic and speakers">This computer</button>
-        </div>
-      )}
-      {dm && (
-        <div className="chrow-compose dm">
-          <textarea value={dmBody} placeholder={`DM ${lead.handle || 'her'}…`} onChange={(e) => setDmBody(e.target.value)} />
-          <div className="fb-actions">
-            {dmMsg && <span className="fb-sub" style={{ color: dmMsg.startsWith('✓') ? '#2f855a' : 'var(--red)' }}>{dmMsg}</span>}
-            <button className="btn sm" onClick={() => setDm(false)}>Close</button>
-            <button className="btn primary sm" style={{ background: '#c2366b', borderColor: '#c2366b' }} disabled={!dmBody.trim()} onClick={async () => { const res = await r.sendLeadDm(lead.id, dmBody.trim()); setDmMsg(res.ok ? '✓ Sent' : res.error || 'Failed'); if (res.ok) setDmBody(''); }}>Send DM</button>
-          </div>
-        </div>
-      )}
-      {text && (
-        <div className="chrow-compose">
-          <textarea value={textBody} placeholder={`Text ${lead.phone}…`} onChange={(e) => setTextBody(e.target.value)} />
-          <div className="fb-actions"><button className="btn sm" onClick={() => setTplPick(true)}>📄 Templates</button><button className="btn sm" onClick={() => setText(false)}>Close</button>
-            <button className="btn primary sm" style={{ background: 'var(--purple)', borderColor: 'var(--purple)' }} disabled={!textBody.trim()} onClick={() => { r.sendReply(lead.id, textBody.trim(), 'text'); setTextBody(''); setText(false); }}>Send text</button></div>
-        </div>
-      )}
-      {emailOpen && <EmailComposer r={r} lead={lead} onClose={() => setEmailOpen(false)} />}
-      {tplPick && <TemplatesSheet r={r} lead={lead} tab="text" onClose={() => setTplPick(false)} onPickText={(b) => setTextBody(b)} />}
-    </div>
-  );
-}
-
-// Why she's here (her Instagram words + DM window) and the callback reminder.
+// Why she's here (her Instagram words + DM window) and a fired callback reminder.
+// Setting / changing a callback lives in the Next step card.
 function LeadContextCards({ r, lead }: { r: R; lead: Lead }) {
-  const [pick, setPick] = useState(false);
   const social = lead.source === 'instagram' && (lead.notes || lead.lastSocialAt);
   const leftMs = lead.lastSocialAt ? 24 * 3600_000 - (Date.now() - new Date(lead.lastSocialAt).getTime()) : 0;
-  const cb = lead.callbackAt ? new Date(lead.callbackAt) : null;
-  const cbLate = cb ? cb.getTime() < Date.now() : false;
   const primed = r.pendingCallLead === lead.id;
   return (
     <>
@@ -2299,22 +2480,6 @@ function LeadContextCards({ r, lead }: { r: R; lead: Lead }) {
           )}
         </div>
       )}
-      {cb && !pick && (
-        <div className={`ctx-card callback ${cbLate ? 'late' : ''}`}>
-          <div className="ctx-h"><b>Callback · {cb.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</b>
-            <span className="ctx-tag">{cbLate ? 'overdue' : 'reminder set'}</span>
-            <span className="grow" />
-            <button className="btn sm" onClick={() => setPick(true)}>Change</button>
-            <button className="btn sm" onClick={() => r.setCallback(lead.id, null)}>Done</button>
-          </div>
-          {lead.callbackNote && <div className="ctx-sub">{lead.callbackNote}</div>}
-          <div className="ctx-sub">Your phone buzzes 5 min before · she has {r.me?.phoneNumber || 'the Relay number'} and it rings you.</div>
-        </div>
-      )}
-      {!cb && !pick && lead.stage !== 'won' && (
-        <button className="ctx-set-cb" onClick={() => setPick(true)}>+ Set a callback reminder</button>
-      )}
-      {pick && <CallbackPicker lead={lead} initialNote={lead.callbackNote} onSet={(iso, note) => { r.setCallback(lead.id, iso, note); setPick(false); }} onCancel={() => setPick(false)} />}
     </>
   );
 }
@@ -2363,6 +2528,8 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
   const [mode, setMode] = useState<'connecting' | 'real' | 'sim'>('connecting');
   const callRef = useRef<any>(null);
   const placedRef = useRef(false); // StrictMode double-mount guard: one bridge per panel
+  // A call started from the number menu can override this device's default.
+  const bridgeMode = !!(r.activeCall?.bridge ?? r.useBridge) && r.canBridge;
   const them = lead.contact?.name && lead.contact.name !== '—' ? lead.contact.name.split(' ')[0] : 'Them';
 
   useEffect(() => {
@@ -2402,7 +2569,7 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
         } else { runSim(inScript); }
         return;
       }
-      if (r.useBridge) {
+      if (bridgeMode) {
         // Cell bridge: Relay rings the rep's phone, then dials her. Audio lives
         // on the cell, so this panel is just status + notes + End & log.
         if (placedRef.current) return;
@@ -2441,8 +2608,8 @@ function CallPanel({ r, lead, direction, incomingCall }: { r: R; lead: Lead; dir
   return (
     <div className="callcol" style={{ display: 'flex' }}>
       <div className="ch"><span className="live"><span className="p" /><span>{status}</span></span><span className="tm">{mm}:{ss}</span></div>
-      <div className="who">{direction === 'in' ? 'incoming' : r.useBridge ? 'cell bridge' : mode === 'real' ? 'live' : 'mobile'} · {lead.phone} · {lead.contact?.name === '—' ? lead.salon : lead.contact?.name}</div>
-      {direction === 'out' && r.useBridge && (
+      <div className="who">{direction === 'in' ? 'incoming' : bridgeMode ? 'cell bridge' : mode === 'real' ? 'live' : 'mobile'} · {lead.phone} · {lead.contact?.name === '—' ? lead.salon : lead.contact?.name}</div>
+      {direction === 'out' && bridgeMode && (
         <div className="bridge-note">Talk on your phone. Give her <b>{r.me?.phoneNumber || 'the Relay number'}</b> — when she calls it back it rings <b>you</b>. Tap <b>End &amp; log</b> here when you hang up.</div>
       )}
       <div className="transcript">
