@@ -600,11 +600,14 @@ export async function markCadenceComplete(leadId: string, name: string, iso: str
 // Deploy the N oldest staged leads into a cadence: flip deployed=true, assign the
 // cadence, reset position, and make them due now. assignToRepId (when given) sets
 // owner_rep_id so the batch lands in that rep's name. Returns the ids that moved.
-export async function deployStagedLeads(count: number, cadenceId: string, assignToRepId?: string): Promise<string[]> {
+export async function deployStagedLeads(count: number, cadenceId: string, assignToRepId?: string, sourceFilter?: string | null): Promise<string[]> {
   const sb = supabaseBrowser();
   if (!sb || count <= 0) return [];
-  const { data: picked, error: selErr } = await sb.from('leads').select('id')
-    .eq('deployed', false).order('created_at', { ascending: true }).limit(count);
+  // sourceFilter: undefined = any source; null = leads with no source; string = that source.
+  let sel = sb.from('leads').select('id').eq('deployed', false);
+  if (sourceFilter === null) sel = sel.or('source.is.null,source.eq.');
+  else if (sourceFilter !== undefined) sel = sel.eq('source', sourceFilter);
+  const { data: picked, error: selErr } = await sel.order('created_at', { ascending: true }).limit(count);
   if (selErr || !picked?.length) { if (selErr) console.error('deployStagedLeads select', selErr); return []; }
   const ids = picked.map((r: any) => r.id);
   const patch: Record<string, unknown> = { deployed: true, cadence_id: cadenceId, cadence_pos: 0, next_action_at: null, cadence_completed_at: null, cadence_completed_name: null };

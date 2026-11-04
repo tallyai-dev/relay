@@ -12,6 +12,7 @@ import { type PRODUCT_TEMPLATES, renderTpl } from '@/lib/templates';
 import { analyzeImport } from '@/lib/csv';
 import { authHeaders, fetchActivityFeed, type FeedActivity } from '@/lib/repo';
 import { BoltMark } from '@/components/Logo';
+import { ALL_SOURCES, NO_SOURCE, sourceLabel, distinctSources, matchesSource, pickerToDeployFilter } from '@/lib/leadSource';
 
 type R = ReturnType<typeof useRelay>;
 
@@ -496,10 +497,12 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
   const [booking, setBooking] = useState('all');
   const [due, setDue] = useState('all');
   const [owner, setOwner] = useState('all');
+  const [source, setSource] = useState(ALL_SOURCES);
   const [needsEnrich, setNeedsEnrich] = useState(false);
   const repName = (id?: string) => r.reps.find((x) => x.id === id)?.name;
 
   const bookingOpts = Array.from(new Set(r.activeLeads.map((l) => l.bookingSystem).filter(Boolean))).sort() as string[];
+  const sourceOpts = distinctSources(r.activeLeads);
   const dueSet = new Set(r.dueLeads.map((l) => l.id));
   const schedSet = new Set(r.scheduledLeads.map((l) => l.id));
 
@@ -507,7 +510,7 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
     if (q) {
       const s = q.trim().toLowerCase();
       const digits = s.replace(/\D/g, '');
-      const hay = [l.salon, l.city, l.contact?.name, l.email, l.handle, l.phone].map((x) => (x || '').toLowerCase());
+      const hay = [l.salon, l.city, l.contact?.name, l.email, l.handle, l.phone, l.source, l.source ? sourceLabel(l.source) : ''].map((x) => (x || '').toLowerCase());
       const phoneDigits = (l.phone || '').replace(/\D/g, '');
       const hit = hay.some((h) => h.includes(s)) || (!!digits && phoneDigits.includes(digits));
       if (!hit) return false;
@@ -519,6 +522,7 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
     if (due === 'sched' && !schedSet.has(l.id)) return false;
     if (owner === 'none') { if (l.ownerRepId) return false; }
     else if (owner !== 'all' && l.ownerRepId !== owner) return false;
+    if (!matchesSource(l.source, source)) return false;
     if (needsEnrich && l.phone && l.email && l.website && l.bookingSystem) return false;
     return true;
   });
@@ -526,8 +530,8 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
   // under the older book (leads otherwise load oldest-first).
   const filtered = filteredRaw.slice().sort((a, b) => Number(b.source === 'instagram') - Number(a.source === 'instagram'));
 
-  const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || owner !== 'all' || needsEnrich;
-  const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setOwner('all'); setNeedsEnrich(false); };
+  const anyFilter = !!q || stage !== 'all' || booking !== 'all' || due !== 'all' || owner !== 'all' || source !== ALL_SOURCES || needsEnrich;
+  const clearFilters = () => { setQ(''); setStage('all'); setBooking('all'); setDue('all'); setOwner('all'); setSource(ALL_SOURCES); setNeedsEnrich(false); };
 
   // Bulk selection → assign many leads to a cadence at once.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -586,6 +590,11 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
             {r.reps.map((rp) => <option key={rp.id} value={rp.id}>{rp.name}</option>)}
           </select>
         )}
+        <select value={source} onChange={(e) => setSource(e.target.value)}>
+          <option value={ALL_SOURCES}>All sources</option>
+          {sourceOpts.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
+          <option value={NO_SOURCE}>No source</option>
+        </select>
         <button className={`lf-toggle ${needsEnrich ? 'on' : ''}`} onClick={() => setNeedsEnrich((v) => !v)}>Needs enrichment</button>
         {anyFilter && <button className="lf-clear" onClick={clearFilters}>Clear</button>}
         <span className="lf-count">{filtered.length} of {r.activeLeads.length}</span>
@@ -672,7 +681,15 @@ function LeadsView({ r, onImport, onNewLead }: { r: R; onImport: () => void; onN
 
 // ── Staging pool + Deploy slider ──────────────────────────────────────────────
 function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
-  const pool = r.stagedLeads.length;
+  const totalStaged = r.stagedLeads.length;
+  const [srcPick, setSrcPick] = useState(ALL_SOURCES);
+  const stagedSources = distinctSources(r.stagedLeads);
+  const countFor = (f: string) => r.stagedLeads.filter((l) => matchesSource(l.source, f)).length;
+  const noSourceCount = countFor(NO_SOURCE);
+  // If the picked source empties out (e.g. after deploying it all), fall back to all.
+  const srcActive = srcPick !== ALL_SOURCES && countFor(srcPick) === 0 ? ALL_SOURCES : srcPick;
+  const poolLeads = srcActive === ALL_SOURCES ? r.stagedLeads : r.stagedLeads.filter((l) => matchesSource(l.source, srcActive));
+  const pool = poolLeads.length;
   const [amount, setAmount] = useState(25);
   const [cadenceId, setCadenceId] = useState(r.cadences[0]?.id || '');
   const [assignTo, setAssignTo] = useState('');
@@ -687,7 +704,7 @@ function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
   const deploy = async () => {
     if (amt <= 0 || !cad) return;
     setBusy(true);
-    const n = await r.deployLeads(amt, cad.id, assignee || undefined);
+    const n = await r.deployLeads(amt, cad.id, assignee || undefined, pickerToDeployFilter(srcActive));
     setBusy(false);
     setFlash(`Deployed ${n} lead${n === 1 ? '' : 's'} into “${cad.name}” — assigned to ${assigneeName(assignee)}.`);
     setTimeout(() => setFlash(null), 4000);
@@ -704,7 +721,17 @@ function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
 
       <div className="stage-wrap">
         <div className="stage-deploy">
-          <div className="pool-big"><span className="n">{pool}</span><span className="lbl">leads waiting in staging</span></div>
+          <div className="pool-big"><span className="n">{pool}</span><span className="lbl">{srcActive === ALL_SOURCES ? 'leads waiting in staging' : `staged from ${sourceLabel(srcActive === NO_SOURCE ? null : srcActive)} (of ${totalStaged})`}</span></div>
+          {totalStaged > 0 && (stagedSources.length > 0) && (
+            <div className="fld">
+              <label>From source</label>
+              <select value={srcActive} onChange={(e) => setSrcPick(e.target.value)}>
+                <option value={ALL_SOURCES}>All sources ({totalStaged})</option>
+                {stagedSources.map((s) => <option key={s} value={s}>{sourceLabel(s)} ({countFor(s)})</option>)}
+                {noSourceCount > 0 && <option value={NO_SOURCE}>No source ({noSourceCount})</option>}
+              </select>
+            </div>
+          )}
           {pool === 0 ? (
             <div className="stage-empty">Nothing staged right now. Imported CSVs land here so you can deploy them in batches on your call days.</div>
           ) : (
@@ -753,13 +780,13 @@ function StagingView({ r, onImport }: { r: R; onImport: () => void }) {
         </div>
 
         <div className="stage-list">
-          <div className="sl-head">Waiting in staging {pool > 0 && <span>{pool}</span>}</div>
+          <div className="sl-head">Waiting in staging{srcActive !== ALL_SOURCES ? ` · ${sourceLabel(srcActive === NO_SOURCE ? null : srcActive)}` : ''} {pool > 0 && <span>{pool}</span>}</div>
           {pool === 0 ? <div className="muted" style={{ padding: 16 }}>Empty — imported leads will appear here.</div> : (
             <div className="sl-rows">
-              {r.stagedLeads.slice(0, 60).map((l, i) => (
+              {poolLeads.slice(0, 60).map((l, i) => (
                 <div key={l.id} className="sl-row">
                   <div className="avatar sm" style={{ background: colorFor(i), position: 'relative', overflow: 'visible' }}>{initials(l.salon)}{l.source === 'instagram' && <IgBadge size={14} />}</div>
-                  <div className="sl-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}{l.phone ? ` · ${l.phone}` : ''}</div></div>
+                  <div className="sl-nm"><div className="nm">{l.salon}</div><div className="loc">{l.city || '—'}{l.phone ? ` · ${l.phone}` : ''}{l.source ? ` · ${sourceLabel(l.source)}` : ''}</div></div>
                   {i < amt && <span className="sl-next">next ↑</span>}
                 </div>
               ))}
