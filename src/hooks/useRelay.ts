@@ -7,6 +7,7 @@ import { authHeaders, setLeadCallback, repoEnabled, fetchLeads, fetchActivities,
 import type { ImportRow } from '@/lib/repo';
 import { TEXT_TEMPLATES, EMAIL_TEMPLATES_LIB, PRODUCT_TEMPLATES, withOverrides, type TplOverrides, type TplKind } from '@/lib/templates';
 import { mapToImportRows } from '@/lib/csv';
+import { pickStaged, type DeploySourceFilter } from '@/lib/leadSource';
 
 export type View = 'leads' | 'staging' | 'enrich' | 'dialer' | 'keypad' | 'inbox' | 'cadences' | 'reports' | 'mobile' | 'team' | 'agent' | 'templates';
 
@@ -1071,14 +1072,14 @@ export function useRelay() {
   const activeLeads = leads.filter((l) => l.deployed !== false && bookMatch(l));
   // Deploy the N oldest staged leads into a cadence (they become due now).
   // assignToRepId puts the batch in that rep's name; defaults to the signed-in user.
-  const deployLeads = useCallback(async (count: number, cadenceId: string, assignToRepId?: string): Promise<number> => {
-    const pool = leadsRef.current.filter((l) => l.deployed === false); // oldest-first (fetch order)
-    const picked = pool.slice(0, Math.max(0, count)).map((l) => l.id);
+  // sourceFilter (optional): undefined = any source (default), null = no source, string = that source.
+  const deployLeads = useCallback(async (count: number, cadenceId: string, assignToRepId?: string, sourceFilter?: DeploySourceFilter): Promise<number> => {
+    const picked = pickStaged(leadsRef.current, count, sourceFilter); // oldest-first (fetch order)
     if (!picked.length) return 0;
     const owner = assignToRepId || me?.id;
     const idSet = new Set(picked);
     setLeads((prev) => prev.map((l) => (idSet.has(l.id) ? { ...l, deployed: true, cadenceId, cadencePos: 0, nextActionAt: undefined, lastTouch: 'New', ownerRepId: owner } : l)));
-    if (enabled) { const moved = await deployStagedLeads(picked.length, cadenceId, owner); return moved.length || picked.length; }
+    if (enabled) { const moved = await deployStagedLeads(picked.length, cadenceId, owner, sourceFilter); return moved.length || picked.length; }
     return picked.length;
   }, [enabled, me]);
 
